@@ -804,8 +804,6 @@ impl Opts<Module<'static>> {
                                 quote! {u32}
                             };
                             let offset = waffle::op_traits::memory_arg(o).expect(&format!("a memory arg from {}",o)).offset;
-                            
-
                             let offset =  if self.module.memories[m2].memory64{
                                 quote! {#offset}
                             } else{
