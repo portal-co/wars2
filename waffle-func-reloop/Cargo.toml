@@ -1,0 +1,12 @@
+[package]
+name = "waffle-func-reloop"
+version = "0.6.0"
+edition = "2021"
+license = "CC0-1.0"
+description = "Utility for a Wasm to Rust converter"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+waffle = {package="portal-pc-waffle",version="^0.5"}
+relooper = "0.1.0"
