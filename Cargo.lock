@@ -633,7 +633,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "waffle-func-reloop"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "portal-pc-waffle",
  "relooper",
@@ -641,7 +641,7 @@ dependencies = [
 
 [[package]]
 name = "wars"
-version = "0.6.2"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "bitflags",
@@ -658,7 +658,7 @@ dependencies = [
 
 [[package]]
 name = "wars-rt"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "castaway",
