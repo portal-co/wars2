@@ -1,13 +1,7 @@
-use core::{
-    iter::{empty, once},
-};
 use alloc::boxed::Box;
+use core::iter::{empty, once};
 // use std::vec::Vec;
-use alloc::{
-    sync::Arc,
-    vec::Vec,
-    vec
-};
+use alloc::{sync::Arc, vec, vec::Vec};
 
 use anyhow::Context;
 use tramp::{tramp, BorrowRec, Thunk};
@@ -16,7 +10,7 @@ pub fn ret<'a, T>(a: T) -> BorrowRec<'a, T> {
     BorrowRec::Ret(a)
 }
 pub use crate::CtxSpec;
-use crate::{Traverse};
+use crate::Traverse;
 #[non_exhaustive]
 pub enum Value<C: CtxSpec> {
     I32(u32),
@@ -37,21 +31,20 @@ pub enum Value<C: CtxSpec> {
     Null,
     ExRef(C::ExternRef),
     #[cfg(feature = "dumpster")]
-    Gc(crate::gc::GcCore<Value<C>>)
+    Gc(crate::gc::GcCore<Value<C>>),
 }
 #[cfg(feature = "dumpster")]
 const _: () = {
     use dumpster::Trace;
-    unsafe impl<C: CtxSpec<ExternRef: Trace>> Trace for Value<C>{
+    unsafe impl<C: CtxSpec<ExternRef: Trace>> Trace for Value<C> {
         fn accept<V: dumpster::Visitor>(&self, visitor: &mut V) -> Result<(), ()> {
-            match self{
+            match self {
                 Self::ExRef(e) => e.accept(visitor),
                 Self::Gc(g) => g.accept(visitor),
-                _ => Ok(())
+                _ => Ok(()),
             }
         }
     }
-
 };
 impl<C: CtxSpec> Traverse<C> for Value<C> {
     fn traverse<'a>(&'a self) -> Box<dyn Iterator<Item = &'a <C as CtxSpec>::ExternRef> + 'a> {
@@ -153,15 +146,14 @@ coe_impl_prim!(u64 in I64);
 coe_impl_prim!(f32 in F32);
 coe_impl_prim!(f64 in F64);
 
-
 #[cfg(feature = "dumpster")]
-pub trait CoeField<C: CtxSpec>: Sized{
+pub trait CoeField<C: CtxSpec>: Sized {
     fn coe(self) -> crate::gc::Field<Value<C>>;
     fn uncoe(x: crate::gc::Field<Value<C>>) -> anyhow::Result<Self>;
 }
 
 #[cfg(feature = "dumpster")]
-pub trait CoeFieldVec<C: CtxSpec>: Sized{
+pub trait CoeFieldVec<C: CtxSpec>: Sized {
     const NUM: usize;
     fn coe(self) -> Vec<crate::gc::Field<Value<C>>>;
     fn uncoe(a: Vec<crate::gc::Field<Value<C>>>) -> anyhow::Result<Self>;
@@ -173,40 +165,42 @@ const _: () = {
 
     use crate::gc::{Const, Field, Mut, Struct};
 
-    impl<C: CtxSpec,V: Coe<C>> CoeField<C> for Const<V>{
+    impl<C: CtxSpec, V: Coe<C>> CoeField<C> for Const<V> {
         fn coe(self) -> crate::gc::Field<Value<C>> {
             crate::gc::Field::Const(self.0.coe())
         }
-    
+
         fn uncoe(x: crate::gc::Field<Value<C>>) -> anyhow::Result<Self> {
-            V::uncoe(match x{
+            V::uncoe(match x {
                 crate::gc::Field::Const(a) => a,
                 crate::gc::Field::Mut(arc) => arc.lock().unwrap().clone(),
-            }).map(Self)
+            })
+            .map(Self)
         }
     }
 
-    impl<C: CtxSpec,V: Coe<C>> CoeField<C> for Mut<V>{
+    impl<C: CtxSpec, V: Coe<C>> CoeField<C> for Mut<V> {
         fn coe(self) -> crate::gc::Field<Value<C>> {
             crate::gc::Field::Mut(Arc::new(Mutex::new(self.0.coe())))
         }
-    
+
         fn uncoe(x: crate::gc::Field<Value<C>>) -> anyhow::Result<Self> {
-            V::uncoe(match x{
+            V::uncoe(match x {
                 crate::gc::Field::Const(a) => a,
                 crate::gc::Field::Mut(arc) => arc.lock().unwrap().clone(),
-            }).map(Self)
+            })
+            .map(Self)
         }
     }
     impl<C: CtxSpec> CoeFieldVec<C> for () {
         fn coe(self) -> Vec<Field<Value<C>>> {
             vec![]
         }
-    
+
         fn uncoe(a: Vec<Field<Value<C>>>) -> anyhow::Result<Self> {
             Ok(())
         }
-        
+
         const NUM: usize = 0;
     }
     impl<C: CtxSpec, A: CoeField<C>, B: CoeFieldVec<C>> CoeFieldVec<C> for (A, B) {
@@ -215,7 +209,7 @@ const _: () = {
             a.push(self.0.coe());
             return a;
         }
-    
+
         fn uncoe(mut a: Vec<Field<Value<C>>>) -> anyhow::Result<Self> {
             let Some(x) = a.pop() else {
                 anyhow::bail!("list too small")
@@ -224,23 +218,22 @@ const _: () = {
             let z = B::uncoe(a)?;
             Ok((y, z))
         }
-        
+
         const NUM: usize = B::NUM + 1;
     }
-    impl<C: CtxSpec, V: CoeFieldVec<C>> Coe<C> for Struct<V>{
+    impl<C: CtxSpec, V: CoeFieldVec<C>> Coe<C> for Struct<V> {
         fn coe(self) -> Value<C> {
             Value::Gc(crate::gc::GcCore::Fields(self.0.coe()))
         }
-    
+
         fn uncoe(x: Value<C>) -> anyhow::Result<Self> {
-            match x{
+            match x {
                 Value::Gc(crate::gc::GcCore::Fields(f)) => V::uncoe(f).map(Self),
-                _ => anyhow::bail!("nota gc")
+                _ => anyhow::bail!("nota gc"),
             }
         }
     }
 };
-
 
 pub trait CoeVec<C: CtxSpec>: Sized {
     const NUM: usize;
@@ -255,7 +248,7 @@ impl<C: CtxSpec> CoeVec<C> for () {
     fn uncoe(a: Vec<Value<C>>) -> anyhow::Result<Self> {
         Ok(())
     }
-    
+
     const NUM: usize = 0;
 }
 impl<C: CtxSpec, A: Coe<C>, B: CoeVec<C>> CoeVec<C> for (A, B) {
@@ -273,7 +266,7 @@ impl<C: CtxSpec, A: Coe<C>, B: CoeVec<C>> CoeVec<C> for (A, B) {
         let z = B::uncoe(a)?;
         Ok((y, z))
     }
-    
+
     const NUM: usize = B::NUM + 1;
 }
 pub fn map_rec<'a, T: 'a, U>(

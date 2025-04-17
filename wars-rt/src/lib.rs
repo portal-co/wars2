@@ -34,7 +34,6 @@ pub enum Pit<X, H> {
 // use func::CtxSpec;
 pub use func::Value;
 
-
 pub trait CtxSpec: Sized {
     type ExternRef: Clone;
 }

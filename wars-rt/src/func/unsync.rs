@@ -234,15 +234,15 @@ const _: () = {
 
         const NUM: usize = B::NUM + 1;
     }
-    impl<C: CtxSpec, V: CoeFieldVec<C>> Coe<C> for Struct<V>{
+    impl<C: CtxSpec, V: CoeFieldVec<C>> Coe<C> for Struct<V> {
         fn coe(self) -> Value<C> {
             Value::Gc(crate::gc::GcCore::Fields(self.0.coe()))
         }
-    
+
         fn uncoe(x: Value<C>) -> anyhow::Result<Self> {
-            match x{
+            match x {
                 Value::Gc(crate::gc::GcCore::Fields(f)) => V::uncoe(f).map(Self),
-                _ => anyhow::bail!("nota gc")
+                _ => anyhow::bail!("nota gc"),
             }
         }
     }
