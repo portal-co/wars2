@@ -13,9 +13,34 @@ pub fn ret<'a, T>(a: T) -> AsyncRec<'a, T> {
 }
 pub enum AsyncRec<'a, T> {
     Ret(T),
-    Async(Pin<Box<dyn Future<Output = AsyncRec<'a, T>> + Send + Sync + 'a>>),
+    Async(Pin<Box<dyn UnwrappedAsyncRec<'a, T>>>),
 }
+pub trait UnwrappedAsyncRec<'a, T>: Future<Output = AsyncRec<'a, T>> + Send + Sync + 'a {
+    async fn go(mut self) -> T
+    where
+        Self: Sized,
+    {
+        return self.await.go().await;
+    }
+}
+pub trait Wrap<'a,T>: Sized{
+    fn wrap(self) -> AsyncRec<'a,T>;
+}
+impl<'a,T> Wrap<'a,T> for AsyncRec<'a,T>{
+    fn wrap(self) -> AsyncRec<'a,T> {
+        self
+    }
+}
+impl<'a,T,F: UnwrappedAsyncRec<'a,T>> Wrap<'a,T> for F{
+    fn wrap(self) -> AsyncRec<'a,T> {
+        AsyncRec::Async(Box::pin(self))
+    }
+}
+impl<'a, T, F: Future<Output = AsyncRec<'a, T>> + Send + Sync + 'a> UnwrappedAsyncRec<'a, T> for F {}
 impl<'a, T> AsyncRec<'a, T> {
+    pub fn wrap(x: impl Wrap<'a,T>) -> Self{
+        x.wrap()
+    }
     pub async fn go(mut self) -> T {
         loop {
             self = match self {

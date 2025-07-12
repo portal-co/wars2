@@ -67,7 +67,7 @@ impl<C: CtxSpec> Traverse<C> for Value<C> {
         }
     }
 }
-pub fn call_ref<'a, A: CoeVec<C> + 'static, B: CoeVec<C> + 'static, C: CtxSpec + 'static>(
+pub fn call_ref<'a, A: CoeVec<C> + 'static, B: CoeVec<C> + 'static, C: CtxSpec + 'a>(
     ctx: &'a mut C,
     go: Df<A, B, C>,
     a: A,
@@ -281,15 +281,21 @@ pub fn map_rec<'a, T: 'a, U>(
         })),
     }
 }
+pub trait Dx<'a,A,B,C: 'a>: Fn(&'a mut C, A) -> tramp::BorrowRec<'a, anyhow::Result<B>> + Send + Sync + 'static{
+
+}
+impl<'a,A,B,C: 'a,T: Fn(&'a mut C, A) -> tramp::BorrowRec<'a, anyhow::Result<B>> + Send + Sync + 'static> Dx<'a,A,B,C> for T{
+
+}
 pub type Df<A, B, C> = Arc<
-    dyn for<'a> Fn(&'a mut C, A) -> tramp::BorrowRec<'a, anyhow::Result<B>> + Send + Sync + 'static,
+    dyn for<'a> Dx<'a,A,B,C>,
 >;
 
 pub fn da<
     A,
     B,
     C,
-    F: for<'a> Fn(&'a mut C, A) -> tramp::BorrowRec<'a, anyhow::Result<B>> + Send + Sync + 'static,
+    F: for<'a> Dx<'a,A,B,C>,
 >(
     f: F,
 ) -> Df<A, B, C> {
@@ -300,10 +306,10 @@ impl<C: CtxSpec + 'static, A: CoeVec<C> + 'static, B: CoeVec<C> + 'static> Coe<C
     fn coe(self) -> Value<C> {
         pub fn x<
             C: CtxSpec,
-            T: for<'a> Fn(
+            T: (for<'a> Fn(
                     &'a mut C,
                     Vec<Value<C>>,
-                ) -> tramp::BorrowRec<'a, anyhow::Result<Vec<Value<C>>>>
+                ) -> tramp::BorrowRec<'a, anyhow::Result<Vec<Value<C>>>>)
                 + Send
                 + Sync
                 + 'static,

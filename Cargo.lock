@@ -10,9 +10,9 @@ checksum = "e16d2d3311acee920a9eb8d33b8cbc1787ce4a264e85f964c2404b969bdcd487"
 
 [[package]]
 name = "arena-traits"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "89940692593628b7642837fcd6e496ed76866c22467c75eaecea0b94c134501e"
+checksum = "294252f426d5a6c175bcacfabf794c7e16790ccc7e0721eaddee0cc946323492"
 
 [[package]]
 name = "autocfg"
@@ -428,9 +428,9 @@ checksum = "afdf2639d3c2fa0b91cdd20b8acacfa2b3da41e297906a93bbb47b88ed10e5f6"
 
 [[package]]
 name = "portal-pc-waffle"
-version = "0.5.4"
+version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f42e2ec0452790e9deb4fca943478d78c9d002ab92a66391b9899df1673992a7"
+checksum = "129eccbc902d2aa4892f85d7baa00980ed15215f9bcedbb13fb4564e13c34833"
 dependencies = [
  "anyhow",
  "arena-traits",

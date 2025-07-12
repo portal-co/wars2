@@ -3,3 +3,4 @@ members=["wars","wars-rt","waffle-func-reloop"]
 resolver="3"
 
 [workspace.dependencies]
+waffle = {package="portal-pc-waffle",version="^0.5.5"}

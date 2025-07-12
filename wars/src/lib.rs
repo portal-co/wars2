@@ -364,7 +364,7 @@ impl Opts<Module<'static>> {
         let returns = returns.iter().map(|x| self.render_ty(&ctx, *x));
         let mut x = if self.flags.contains(Flags::ASYNC) {
             quote! {
-                fn #name<'a,C: #base + 'static>(ctx: &'a mut C, #root::_rexport::tuple_list::tuple_list!(#(#param_ids),*): #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)) -> #root::func::unsync::AsyncRec<'a,#root::_rexport::anyhow::Result<#root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)>>
+                fn #name<'a,C: #base + 'static>(ctx: &'a mut C, #root::_rexport::tuple_list::tuple_list!(#(#param_ids),*): #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)) -> impl #root::func::unsync::UnwrappedAsyncRec<'a,#root::_rexport::anyhow::Result<#root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)>>
             }
         } else {
             quote! {
@@ -392,8 +392,15 @@ impl Opts<Module<'static>> {
         let generics =
             self.render_generics(ctx, &self.module.signatures[self.module.funcs[x].sig()]);
         let x = self.fname(x);
+        let r = if self.flags.contains(Flags::ASYNC) {
+            quasiquote!(#root::func::unsync::AsyncRec::wrap(res))
+        } else {
+            quasiquote!(res)
+        };
         quasiquote! {
-            #{self.fp()}::da::<#generics,C,_>(|ctx,arg|#x(ctx,arg))
+            #{self.fp()}::da::<#generics,C,_>(|ctx,arg|match #x(ctx,arg){
+                res => #r
+            })
         }
     }
     pub fn render_self_sig(
@@ -402,6 +409,9 @@ impl Opts<Module<'static>> {
         wrapped: Ident,
         data: &SignatureData,
     ) -> TokenStream {
+        self.render_export(name, wrapped, data)
+    }
+    pub fn render_export(&self, name: Ident, wrapped: Ident, data: &SignatureData) -> TokenStream {
         let SignatureData::Func {
             params, returns, ..
         } = data
@@ -423,7 +433,7 @@ impl Opts<Module<'static>> {
         if self.flags.contains(Flags::ASYNC) {
             quote! {
                 fn #name<'a>(self: &'a mut Self, #root::_rexport::tuple_list::tuple_list!(#(#param_ids),*): #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)) -> #root::func::unsync::AsyncRec<'a,#root::_rexport::anyhow::Result<#root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)>> where Self: 'static{
-                    return #wrapped(self,#root::_rexport::tuple_list::tuple_list!(#(#param_ids),*));
+                    return #root::func::unsync::AsyncRec::wrap(#wrapped(self,#root::_rexport::tuple_list::tuple_list!(#(#param_ids),*)));
                 }
             }
         } else {
@@ -1336,9 +1346,9 @@ impl Opts<Module<'static>> {
         };
         if self.flags.contains(Flags::ASYNC) {
             b = quasiquote! {
-                return #{self.fp()}::AsyncRec::Async(#{self.alloc()}::boxed::Box::pin(async move{
+                return #{self.alloc()}::boxed::Box::pin(async move{
                     #b
-                }))
+                })
             }
         }
         Ok(quote! {
@@ -1628,7 +1638,7 @@ pub fn go(opts: &Opts<Module<'static>>) -> anyhow::Result<proc_macro2::TokenStre
         match &xp.kind {
             ExportKind::Func(f) => {
                 let f = *f;
-                let d = opts.render_self_sig(
+                let d = opts.render_export(
                     format_ident!("{}", xp.name),
                     opts.fname(f),
                     &opts.module.signatures[opts.module.funcs[f].sig()],

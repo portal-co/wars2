@@ -11,7 +11,7 @@ description = "Wasm to Rust converter"
 bitflags = "2.5.0"
 hex = "0.4.3"
 
-waffle = {package="portal-pc-waffle",version="^0.5"}
+waffle.workspace = true
 proc-macro2 = "1.0.85"
 quasiquote = "0.1.1"
 quote = "1.0.36"
