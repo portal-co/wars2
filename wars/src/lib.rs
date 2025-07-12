@@ -536,8 +536,8 @@ impl Opts<Module<'static>> {
                                 )?;
                                 quasiquote!{
                                     match #{if self.flags.contains(Flags::ASYNC){
-                                        quote!{
-                                            #x.go().await
+                                        quasiquote!{
+                                            #{self.alloc()}::boxed::Box::pin(#x.go()).await
                                         }
                                     }else{
                                         quote!{
