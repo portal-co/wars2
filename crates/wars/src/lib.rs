@@ -97,6 +97,14 @@ pub struct OptsCore<'a> {
     pub roots: BTreeMap<String, TokenStream>,
     pub plugins: Vec<Arc<dyn Plugin + 'a>>,
 }
+impl<'a> OptsCore<'a> {
+    pub fn inflate(self) -> OptsLt<'a, &'a [u8]> {
+        OptsLt {
+            module: self.bytes,
+            core: self,
+        }
+    }
+}
 pub type Opts<B> = OptsLt<'static, B>;
 // pub(crate) trait ImportCfg {
 //     fn import(&self, module: &str, name: &str) -> TokenStream;
