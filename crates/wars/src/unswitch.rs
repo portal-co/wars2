@@ -1,11 +1,9 @@
 use std::iter::empty;
-
 use waffle::{
     Block, ExportKind, Func, FuncDecl, Import, ImportKind, Memory, MemoryArg, MemoryData, Module,
     Operator, Signature, SignatureData, Table, Type, Value, ValueDef,
 };
 use waffle::{BlockTarget, FunctionBody, Terminator};
-
 pub fn go(f: &mut FunctionBody) {
     let vz = f.arg_pool.from_iter(empty());
     let tz = f.type_pool.from_iter(empty());

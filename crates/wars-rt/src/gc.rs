@@ -4,23 +4,18 @@ use std::{
     sync::{Arc, Mutex},
     vec::Vec,
 };
-
 use dumpster::{sync::Gc, Trace};
-
 use crate::{CtxSpec, Traverse};
 // use ic_stable_structures::Vec;
-
 mod heapsize {
     pub trait HeapSize {}
     impl<T: ?Sized> HeapSize for T {}
 }
-
 #[derive(Clone)]
 #[non_exhaustive]
 pub enum GcCore<R> {
     Fields(Vec<Field<R>>),
 }
-
 impl<R: Clone> GcCore<R> {
     pub fn get_field(&self, a: usize) -> R {
         match self {
@@ -41,7 +36,6 @@ impl<R: Clone> GcCore<R> {
         }
     }
 }
-
 unsafe impl<R: Trace> Trace for GcCore<R> {
     fn accept<V: dumpster::Visitor>(&self, visitor: &mut V) -> Result<(), ()> {
         match self {
@@ -49,21 +43,18 @@ unsafe impl<R: Trace> Trace for GcCore<R> {
         }
     }
 }
-
 impl<C: CtxSpec, R: Traverse<C>> Traverse<C> for GcCore<R> {
     fn traverse<'a>(&'a self) -> Box<dyn Iterator<Item = &'a C::ExternRef> + 'a> {
         return match self {
             GcCore::Fields(vec) => Box::new(vec.iter().flat_map(|a| a.traverse())),
         };
     }
-
     fn traverse_mut<'a>(&'a mut self) -> Box<dyn Iterator<Item = &'a mut C::ExternRef> + 'a> {
         return match self {
             GcCore::Fields(vec) => Box::new(vec.iter_mut().flat_map(|a| a.traverse_mut())),
         };
     }
 }
-
 #[derive(Clone)]
 #[non_exhaustive]
 pub enum Field<R> {
@@ -85,7 +76,6 @@ impl<C: CtxSpec, R: Traverse<C>> Traverse<C> for Field<R> {
             Field::Mut(arc) => Box::new(empty()), //TODO: fix
         }
     }
-
     fn traverse_mut<'a>(
         &'a mut self,
     ) -> Box<dyn Iterator<Item = &'a mut <C as CtxSpec>::ExternRef> + 'a> {
@@ -100,7 +90,6 @@ macro_rules! newty {
         #[derive(Clone)]
         #[repr(transparent)]
         pub struct $name<W>(pub W);
-
         unsafe impl<W: Trace> Trace for $name<W> {
             fn accept<V: dumpster::Visitor>(&self, visitor: &mut V) -> Result<(), ()> {
                 self.0.accept(visitor)

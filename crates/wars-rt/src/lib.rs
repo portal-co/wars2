@@ -1,30 +1,21 @@
 #![no_std]
 extern crate alloc;
-
 pub use core::convert::Infallible;
 pub use either::Either;
-
 pub mod func;
 pub mod wasix;
-
 #[cfg(feature = "dumpster")]
 pub mod gc;
-
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use core::iter::empty;
-
 #[cfg(feature = "std")]
 pub use std::sync::Mutex;
-
 #[cfg(not(feature = "std"))]
 pub use spin::Mutex;
-
 pub trait Err: Into<anyhow::Error> {}
 impl<T: Into<anyhow::Error>> Err for T {}
-
 #[cfg(feature = "std")]
 extern crate std;
-
 #[derive(Clone)]
 pub enum Pit<X, H> {
     Guest { id: [u8; 32], x: X, s: [u8; 32] },
@@ -33,7 +24,6 @@ pub enum Pit<X, H> {
 // use as_ref::AsSlice;
 // use func::CtxSpec;
 pub use func::Value;
-
 pub trait CtxSpec: Sized {
     type ExternRef: Clone;
 }
@@ -45,7 +35,6 @@ impl<C: CtxSpec, V: Traverse<C>> Traverse<C> for Vec<V> {
     fn traverse<'a>(&'a self) -> Box<dyn Iterator<Item = &'a <C as CtxSpec>::ExternRef> + 'a> {
         Box::new(self.iter().flat_map(|a| a.traverse()))
     }
-
     fn traverse_mut<'a>(
         &'a mut self,
     ) -> Box<dyn Iterator<Item = &'a mut <C as CtxSpec>::ExternRef> + 'a> {
@@ -56,7 +45,6 @@ impl<C: CtxSpec> Traverse<C> for u32 {
     fn traverse<'a>(&'a self) -> Box<dyn Iterator<Item = &'a <C as CtxSpec>::ExternRef> + 'a> {
         Box::new(empty())
     }
-
     fn traverse_mut<'a>(
         &'a mut self,
     ) -> Box<dyn Iterator<Item = &'a mut <C as CtxSpec>::ExternRef> + 'a> {
@@ -67,7 +55,6 @@ impl<C: CtxSpec> Traverse<C> for u64 {
     fn traverse<'a>(&'a self) -> Box<dyn Iterator<Item = &'a <C as CtxSpec>::ExternRef> + 'a> {
         Box::new(empty())
     }
-
     fn traverse_mut<'a>(
         &'a mut self,
     ) -> Box<dyn Iterator<Item = &'a mut <C as CtxSpec>::ExternRef> + 'a> {
@@ -83,27 +70,22 @@ pub trait Memory {
 #[cfg(feature = "ic-stable-structures")]
 pub mod ic {
     use alloc::{boxed::Box, vec};
-
     #[repr(transparent)]
     pub struct Stable<T>(pub T);
-
     impl<T: ic_stable_structures::Memory> super::Memory for Stable<T> {
         fn read<'a>(&'a self, a: u64, s: u64) -> anyhow::Result<Box<dyn AsRef<[u8]> + 'a>> {
             let mut v = vec![0u8; s as usize];
             self.0.read(a, &mut v);
             Ok(Box::new(v))
         }
-
         fn write(&mut self, a: u64, x: &[u8]) -> anyhow::Result<()> {
             self.0.write(a, x);
             Ok(())
         }
-
         fn size(&self) -> anyhow::Result<u64> {
             let s = self.0.size();
             Ok(s * 65536)
         }
-
         fn grow(&mut self, x: u64) -> anyhow::Result<()> {
             if self.0.grow((x + 65535) / 65536) == -1 {
                 anyhow::bail!("stable growth failed")
@@ -112,21 +94,17 @@ pub mod ic {
         }
     }
 }
-
 impl Memory for Vec<u8> {
     fn read<'a>(&'a self, a: u64, s: u64) -> anyhow::Result<Box<dyn AsRef<[u8]> + 'a>> {
         Ok(Box::new(&self[(a as usize)..][..(s as usize)]))
     }
-
     fn write(&mut self, a: u64, x: &[u8]) -> anyhow::Result<()> {
         self[(a as usize)..][..x.len()].copy_from_slice(x);
         Ok(())
     }
-
     fn size(&self) -> anyhow::Result<u64> {
         Ok(self.len() as u64)
     }
-
     fn grow(&mut self, x: u64) -> anyhow::Result<()> {
         self.extend((0..x).map(|a| 0u8));
         Ok(())
@@ -136,15 +114,12 @@ impl<T: Memory + ?Sized> Memory for Box<T> {
     fn read<'a>(&'a self, a: u64, s: u64) -> anyhow::Result<Box<dyn AsRef<[u8]> + 'a>> {
         self.as_ref().read(a, s)
     }
-
     fn write(&mut self, a: u64, x: &[u8]) -> anyhow::Result<()> {
         self.as_mut().write(a, x)
     }
-
     fn size(&self) -> Result<u64, anyhow::Error> {
         self.as_ref().size()
     }
-
     fn grow(&mut self, x: u64) -> anyhow::Result<()> {
         self.as_mut().grow(x)
     }
@@ -156,17 +131,14 @@ impl<T: Memory> Memory for Arc<std::sync::Mutex<T>> {
         let r = l.read(a, s)?;
         return Ok(Box::new(r.as_ref().as_ref().to_vec()));
     }
-
     fn write(&mut self, a: u64, x: &[u8]) -> anyhow::Result<()> {
         let mut l = self.lock().unwrap();
         return l.write(a, x);
     }
-
     fn size(&self) -> Result<u64, anyhow::Error> {
         let l = self.lock().unwrap();
         return l.size();
     }
-
     fn grow(&mut self, x: u64) -> anyhow::Result<()> {
         let mut l = self.lock().unwrap();
         return l.grow(x);
@@ -179,17 +151,14 @@ impl<T: Memory> Memory for Arc<spin::Mutex<T>> {
         let r = l.read(a, s)?;
         return Ok(Box::new(r.as_ref().as_ref().to_vec()));
     }
-
     fn write(&mut self, a: u64, x: &[u8]) -> anyhow::Result<()> {
         let mut l = self.lock();
         return l.write(a, x);
     }
-
     fn size(&self) -> Result<u64, anyhow::Error> {
         let l = self.lock();
         return l.size();
     }
-
     fn grow(&mut self, x: u64) -> anyhow::Result<()> {
         let mut l = self.lock();
         return l.grow(x);
@@ -203,17 +172,14 @@ impl<T: Memory> Memory for Arc<spin::Mutex<T>> {
 //                 core::slice::from_raw_parts(a as usize as *const u8, s as usize)
 //             }));
 //         }
-
 //         fn write(&mut self, a: u64, x: &[u8]) -> anyhow::Result<()> {
 //             let n = unsafe { core::slice::from_raw_parts_mut(a as usize as *mut u8, x.len()) };
 //             n.copy_from_slice(x);
 //             return Ok(());
 //         }
-
 //         fn size(&self) -> Result<u64, anyhow::Error> {
 //             anyhow::bail!("host memory cannot use size")
 //         }
-
 //         fn grow(&mut self, x: u64) -> anyhow::Result<()> {
 //             anyhow::bail!("host memory cannot use grow")
 //         }
@@ -361,7 +327,6 @@ macro_rules! int_ty{
                     0
                 }))
             }
-
             pub fn [<$p sub>](a: $int, b: $int) -> anyhow::Result<tuple_list::tuple_list_type!($int)> {
                 Ok(tuple_list::tuple_list!(a.wrapping_sub(b)))
             }

@@ -1,7 +1,5 @@
 use std::sync::Arc;
-
 use wasm_runtime_layer::{AsContextMut, ExternRef, FuncType};
-
 use crate::func::CtxSpec;
 #[derive(Clone)]
 pub enum MetaType {
@@ -42,7 +40,6 @@ pub trait Natives: Sized {
 }
 impl Natives for () {
     fn to_val(&self, v: &mut [wasm_runtime_layer::Value]) {}
-
     fn from_val(v: &[wasm_runtime_layer::Value]) -> anyhow::Result<Self> {
         Ok(())
     }
@@ -52,7 +49,6 @@ impl<T: Native, U: Natives> Natives for (T, U) {
         self.0.to_val(&mut v[0]);
         self.1.to_val(&mut v[1..]);
     }
-
     fn from_val(v: &[wasm_runtime_layer::Value]) -> anyhow::Result<Self> {
         Ok((T::from_val(&v[0])?, U::from_val(&v[1..])?))
     }
@@ -115,7 +111,6 @@ where
                     for ((w, v), t) in v.iter().rev().zip(rets.iter_mut()).zip(returns.iter()) {
                         *v = translate_in(w, ctx.data_mut().as_mut(), t)?;
                     }
-
                     Ok(())
                 },
             )))

@@ -6,7 +6,6 @@ use std::{
     iter::once,
     sync::{Arc, OnceLock},
 };
-
 // use pit_core::{Arg, Interface};
 use proc_macro2::{Span, TokenStream};
 use quasiquote::quasiquote;
@@ -20,33 +19,32 @@ use waffle::{
     Value, WithNullable,
 };
 pub mod pit;
-
 pub struct MemImport {
     pub expr: TokenStream,
     // pub r#type: TokenStream
 }
 pub trait Plugin {
-    fn pre(&self, module: &mut Opts<Module<'static>>) -> anyhow::Result<()>;
+    fn pre(&self, module: &mut OptsLt<Module<'static>>) -> anyhow::Result<()>;
     fn import(
         &self,
-        opts: &Opts<Module<'static>>,
+        opts: &OptsLt<Module<'static>>,
         module: &str,
         name: &str,
         params: Vec<TokenStream>,
     ) -> anyhow::Result<Option<TokenStream>>;
     fn mem_import(
         &self,
-        opts: &Opts<Module<'static>>,
+        opts: &OptsLt<Module<'static>>,
         module: &str,
         name: &str,
     ) -> anyhow::Result<Option<MemImport>> {
         Ok(None)
     }
-    fn post(&self, opts: &Opts<Module<'static>>) -> anyhow::Result<TokenStream>;
-    fn bounds(&self, opts: &Opts<Module<'static>>) -> anyhow::Result<Option<TokenStream>> {
+    fn post(&self, opts: &OptsLt<Module<'static>>) -> anyhow::Result<TokenStream>;
+    fn bounds(&self, opts: &OptsLt<Module<'static>>) -> anyhow::Result<Option<TokenStream>> {
         Ok(None)
     }
-    fn exref_bounds(&self, opts: &Opts<Module<'static>>) -> anyhow::Result<Option<TokenStream>> {
+    fn exref_bounds(&self, opts: &OptsLt<Module<'static>>) -> anyhow::Result<Option<TokenStream>> {
         Ok(None)
     }
 }
@@ -86,7 +84,7 @@ pub fn bindname(a: &str) -> String {
 //     fn import(&self, module: &str, name: &str) -> TokenStream;
 // }
 pub const INTRINSIC: &'static str = "wars_intrinsic/";
-impl Opts<Module<'static>> {
+impl OptsLt<'_,Module<'static>> {
     pub fn alloc(&self) -> TokenStream {
         quasiquote!(#{self.crate_path.clone()}::_rexport::alloc)
     }
@@ -276,7 +274,6 @@ impl Opts<Module<'static>> {
         //     }
         // }
         // if self.flags.contains(Flags::PIT) {
-
         // };
         let id = format_ident!("{}_{}", bindname(module), bindname(name));
         return Ok(quote! {
@@ -428,7 +425,6 @@ impl Opts<Module<'static>> {
             .enumerate()
             .map(|(a, _)| format_ident!("p{a}"))
             .collect::<Vec<_>>();
-
         let returns = returns.iter().map(|x| self.render_ty(&ctx, *x));
         if self.flags.contains(Flags::ASYNC) {
             quote! {
@@ -461,7 +457,6 @@ impl Opts<Module<'static>> {
             .enumerate()
             .map(|(a, _)| format_ident!("p{a}"))
             .collect::<Vec<_>>();
-
         let returns = returns.iter().map(|x| self.render_ty(&ctx, *x));
         if self.flags.contains(Flags::ASYNC) {
             quote! {
@@ -1142,7 +1137,6 @@ impl Opts<Module<'static>> {
                     }
                 };
                 let term = self.render_term(f, b, s.label, &render_target)?;
-
                 let immediate = s
                     .immediate
                     .as_ref()
@@ -1359,7 +1353,7 @@ impl Opts<Module<'static>> {
     }
 }
 #[derive(Clone)]
-pub struct Opts<B> {
+pub struct OptsLt<'a,B> {
     pub crate_path: syn::Path,
     pub module: B,
     pub name: Ident,
@@ -1367,11 +1361,12 @@ pub struct Opts<B> {
     pub embed: TokenStream,
     pub data: BTreeMap<Ident, TokenStream>,
     pub roots: BTreeMap<String, TokenStream>,
-    pub plugins: Vec<Arc<dyn Plugin>>,
+    pub plugins: Vec<Arc<dyn Plugin + 'a>>,
     // pub cfg: Arc<dyn ImportCfg>,
 }
-impl<X: AsRef<[u8]>> Opts<X> {
-    pub fn to_mod(&self) -> Opts<Module<'static>> {
+pub type Opts<B> = OptsLt<'static,B>;
+impl<'a,X: AsRef<[u8]>> OptsLt<'a,X> {
+    pub fn to_mod(&self) -> OptsLt<'a,Module<'static>> {
         let opts = self;
         let mut module =
             waffle::Module::from_wasm_bytes(opts.module.as_ref(), &Default::default()).unwrap();
@@ -1383,7 +1378,7 @@ impl<X: AsRef<[u8]>> Opts<X> {
         let internal_path = format_ident!("_{}_internal", opts.name);
         let data = format_ident!("{}Data", opts.name);
         let name = opts.name.clone();
-        let opts = Opts {
+        let opts = OptsLt {
             crate_path: opts.crate_path.clone(),
             module,
             name: name.clone(),
@@ -1398,7 +1393,7 @@ impl<X: AsRef<[u8]>> Opts<X> {
         return opts;
     }
 }
-impl ToTokens for Opts<Module<'static>> {
+impl<'a> ToTokens for OptsLt<'a,Module<'static>> {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         match go(self) {
             Ok(a) => a.to_tokens(tokens),
@@ -1408,7 +1403,7 @@ impl ToTokens for Opts<Module<'static>> {
         }
     }
 }
-pub fn go(opts: &Opts<Module<'static>>) -> anyhow::Result<proc_macro2::TokenStream> {
+pub fn go(opts: &OptsLt<'_,Module<'static>>) -> anyhow::Result<proc_macro2::TokenStream> {
     let mut opts = opts.clone();
     let mut ps = vec![];
     while let Some(p) = opts.plugins.pop() {
@@ -1848,7 +1843,6 @@ pub fn go(opts: &Opts<Module<'static>>) -> anyhow::Result<proc_macro2::TokenStre
                 };
                 fn data(&mut self) -> &mut #data<Self>;
                 #(#fs)*
-
             }
             pub trait #{format_ident!("{name}Impl")}: #name{
                 #(#fs3)*
@@ -1870,7 +1864,6 @@ pub fn go(opts: &Opts<Module<'static>>) -> anyhow::Result<proc_macro2::TokenStre
             //     pub wrapped: *mut T,
             //     pub x: #{opts.fp()}::Value<T>,
             // }
-
             impl<Target: #name + ?Sized> Default for #data<Target>{
                 fn default() -> Self{
                     Self{

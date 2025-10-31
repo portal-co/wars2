@@ -1,6 +1,5 @@
 use relooper::ShapedBlock;
 use waffle::{cfg::CFGInfo, Block, FunctionBody};
-
 pub fn go(b: &FunctionBody) -> Box<ShapedBlock<Block>> {
     let cfg = CFGInfo::new(b);
     let reloop = std::panic::catch_unwind(|| {
