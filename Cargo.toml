@@ -8,3 +8,4 @@ description = "Wasm to Rust converter"
 
 [workspace.dependencies]
 waffle = { package = "portal-pc-waffle", version = "^0.5.5" }
+wasmparser = "0.240.0"
