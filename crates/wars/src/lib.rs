@@ -62,24 +62,7 @@ bitflags::bitflags! {
 }
 pub(crate) mod unswitch;
 // pub(crate) mod wasix;
-pub(crate) fn mangle_value(a: Value, b: usize) -> Ident {
-    if b == 0 {
-        format_ident!("{a}")
-    } else {
-        format_ident!("{a}p{}", b - 1)
-    }
-}
-pub(crate) fn bindname(a: &str) -> String {
-    let mut v = vec![];
-    for k in a.chars() {
-        if k.is_alphanumeric() {
-            v.push(k)
-        } else {
-            v.extend(format!("_{}_", k as u32).chars());
-        }
-    }
-    return v.into_iter().collect();
-}
+
 #[derive(Clone)]
 pub struct OptsLt<'a, B> {
     pub module: B,
