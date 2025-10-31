@@ -1,68 +1,45 @@
 use alloc::boxed::Box;
-use core::iter::{empty, once};
+use core::{
+    iter::{empty, once},
+    marker::PhantomData,
+    mem::transmute,
+};
 // use std::vec::Vec;
 use alloc::{sync::Arc, vec, vec::Vec};
 use anyhow::Context;
 use tramp::{tramp, BorrowRec, Thunk};
 pub mod unsync;
+pub mod value;
 pub fn ret<'a, T>(a: T) -> BorrowRec<'a, T> {
     BorrowRec::Ret(a)
 }
 pub use crate::CtxSpec;
-use crate::Traverse;
-#[non_exhaustive]
-pub enum Value<C: CtxSpec> {
-    I32(u32),
-    I64(u64),
-    F32(f32),
-    F64(f64),
-    FunRef(
-        Arc<
-            dyn for<'a> Fn(
-                    &'a mut C,
-                    Vec<Value<C>>,
-                ) -> tramp::BorrowRec<'a, anyhow::Result<Vec<Value<C>>>>
-                + Send
-                + Sync
-                + 'static,
-        >,
-    ),
-    Null,
-    ExRef(C::ExternRef),
-    #[cfg(feature = "dumpster")]
-    Gc(crate::gc::GcCore<Value<C>>),
+use crate::{func::value::ForLt, Traverse};
+#[repr(transparent)]
+pub struct Value<C: CtxSpec>(pub value::Value<C, BorrowForLt<C>>);
+pub struct BorrowForLt<C: CtxSpec> {
+    ph: PhantomData<C>,
+}
+impl<'a, C: CtxSpec> ForLt<'a> for BorrowForLt<C> {
+    type ForLt = tramp::BorrowRec<'a, anyhow::Result<Vec<Value<C>>>>;
 }
 #[cfg(feature = "dumpster")]
 const _: () = {
     use dumpster::Trace;
     unsafe impl<C: CtxSpec<ExternRef: Trace>> Trace for Value<C> {
         fn accept<V: dumpster::Visitor>(&self, visitor: &mut V) -> Result<(), ()> {
-            match self {
-                Self::ExRef(e) => e.accept(visitor),
-                Self::Gc(g) => g.accept(visitor),
-                _ => Ok(()),
-            }
+            self.0.accept(visitor)
         }
     }
 };
 impl<C: CtxSpec> Traverse<C> for Value<C> {
     fn traverse<'a>(&'a self) -> Box<dyn Iterator<Item = &'a <C as CtxSpec>::ExternRef> + 'a> {
-        match self {
-            Value::ExRef(e) => Box::new(once(e)),
-            #[cfg(feature = "dumpster")]
-            Value::Gc(g) => g.traverse(),
-            _ => Box::new(empty()),
-        }
+        self.0.traverse()
     }
     fn traverse_mut<'a>(
         &'a mut self,
     ) -> Box<dyn Iterator<Item = &'a mut <C as CtxSpec>::ExternRef> + 'a> {
-        match self {
-            Value::ExRef(e) => Box::new(once(e)),
-            #[cfg(feature = "dumpster")]
-            Value::Gc(g) => g.traverse_mut(),
-            _ => Box::new(empty()),
-        }
+        self.0.traverse_mut()
     }
 }
 pub fn call_ref<'a, A: CoeVec<C> + 'static, B: CoeVec<C> + 'static, C: CtxSpec + 'a>(
@@ -75,17 +52,7 @@ pub fn call_ref<'a, A: CoeVec<C> + 'static, B: CoeVec<C> + 'static, C: CtxSpec +
 }
 impl<C: CtxSpec> Clone for Value<C> {
     fn clone(&self) -> Self {
-        match self {
-            Self::I32(arg0) => Self::I32(arg0.clone()),
-            Self::I64(arg0) => Self::I64(arg0.clone()),
-            Self::F32(arg0) => Self::F32(arg0.clone()),
-            Self::F64(arg0) => Self::F64(arg0.clone()),
-            Self::FunRef(arg0) => Self::FunRef(arg0.clone()),
-            Self::Null => Self::Null,
-            Self::ExRef(e) => Self::ExRef(e.clone()),
-            #[cfg(feature = "dumpster")]
-            Self::Gc(c) => Self::Gc(c.clone()),
-        }
+        Self(self.0.clone())
     }
 }
 pub trait Coe<C: CtxSpec>: Sized {
@@ -110,12 +77,12 @@ impl<C: CtxSpec> Coe<C> for Value<C> {
 impl<C: CtxSpec, D: Coe<C>> Coe<C> for Option<D> {
     fn coe(self) -> Value<C> {
         match self {
-            None => Value::Null,
+            None => Value(value::Value::Null),
             Some(d) => d.coe(),
         }
     }
     fn uncoe(x: Value<C>) -> anyhow::Result<Self> {
-        if let Value::Null = x {
+        if let value::Value::Null = &x.0 {
             return Ok(None);
         }
         return Ok(Some(D::uncoe(x)?));
@@ -125,11 +92,11 @@ macro_rules! coe_impl_prim {
     ($a:tt in $b:ident) => {
         impl<C: CtxSpec> Coe<C> for $a {
             fn coe(self) -> Value<C> {
-                Value::$b(self)
+                Value(value::Value::$b(self))
             }
             fn uncoe(x: Value<C>) -> anyhow::Result<Self> {
-                match x {
-                    Value::$b(a) => Ok(a),
+                match x.0 {
+                    value::Value::$b(a) => Ok(a),
                     _ => anyhow::bail!("invalid type"),
                 }
             }
@@ -153,8 +120,8 @@ pub trait CoeFieldVec<C: CtxSpec>: Sized {
 }
 #[cfg(feature = "dumpster")]
 const _: () = {
-    use std::sync::Mutex;
     use crate::gc::{Const, Field, Mut, Struct};
+    use std::sync::Mutex;
     impl<C: CtxSpec, V: Coe<C>> CoeField<C> for Const<V> {
         fn coe(self) -> crate::gc::Field<Value<C>> {
             crate::gc::Field::Const(self.0.coe())
@@ -206,11 +173,22 @@ const _: () = {
     }
     impl<C: CtxSpec, V: CoeFieldVec<C>> Coe<C> for Struct<V> {
         fn coe(self) -> Value<C> {
-            Value::Gc(crate::gc::GcCore::Fields(self.0.coe()))
+            Value(value::Value::Gc(crate::gc::GcCore::Fields(
+                match self.0.coe() {
+                    a => unsafe {
+                        use core::mem::transmute;
+                        transmute(a)
+                    },
+                },
+            )))
         }
         fn uncoe(x: Value<C>) -> anyhow::Result<Self> {
-            match x {
-                Value::Gc(crate::gc::GcCore::Fields(f)) => V::uncoe(f).map(Self),
+            match x.0 {
+                value::Value::Gc(crate::gc::GcCore::Fields(f)) => V::uncoe(unsafe {
+                    use core::mem::transmute;
+                    transmute(f)
+                })
+                .map(Self),
                 _ => anyhow::bail!("nota gc"),
             }
         }
@@ -258,21 +236,21 @@ pub fn map_rec<'a, T: 'a, U>(
         })),
     }
 }
-pub trait Dx<'a,A,B,C: 'a>: Fn(&'a mut C, A) -> tramp::BorrowRec<'a, anyhow::Result<B>> + Send + Sync + 'static{
+pub trait Dx<'a, A, B, C: 'a>:
+    Fn(&'a mut C, A) -> tramp::BorrowRec<'a, anyhow::Result<B>> + Send + Sync + 'static
+{
 }
-impl<'a,A,B,C: 'a,T: Fn(&'a mut C, A) -> tramp::BorrowRec<'a, anyhow::Result<B>> + Send + Sync + 'static> Dx<'a,A,B,C> for T{
+impl<
+        'a,
+        A,
+        B,
+        C: 'a,
+        T: Fn(&'a mut C, A) -> tramp::BorrowRec<'a, anyhow::Result<B>> + Send + Sync + 'static,
+    > Dx<'a, A, B, C> for T
+{
 }
-pub type Df<A, B, C> = Arc<
-    dyn for<'a> Dx<'a,A,B,C>,
->;
-pub fn da<
-    A,
-    B,
-    C,
-    F: for<'a> Dx<'a,A,B,C>,
->(
-    f: F,
-) -> Df<A, B, C> {
+pub type Df<A, B, C> = Arc<dyn for<'a> Dx<'a, A, B, C>>;
+pub fn da<A, B, C, F: for<'a> Dx<'a, A, B, C>>(f: F) -> Df<A, B, C> {
     Arc::new(f)
 }
 impl<C: CtxSpec + 'static, A: CoeVec<C> + 'static, B: CoeVec<C> + 'static> Coe<C> for Df<A, B, C> {
@@ -281,7 +259,7 @@ impl<C: CtxSpec + 'static, A: CoeVec<C> + 'static, B: CoeVec<C> + 'static> Coe<C
             C: CtxSpec,
             T: (for<'a> Fn(
                     &'a mut C,
-                    Vec<Value<C>>,
+                    Vec<value::Value<C, BorrowForLt<C>>>,
                 ) -> tramp::BorrowRec<'a, anyhow::Result<Vec<Value<C>>>>)
                 + Send
                 + Sync
@@ -291,22 +269,24 @@ impl<C: CtxSpec + 'static, A: CoeVec<C> + 'static, B: CoeVec<C> + 'static> Coe<C
         ) -> T {
             return a;
         }
-        Value::FunRef(Arc::new(x(move |ctx, x| {
-            let x = match A::uncoe(x) {
-                Ok(x) => x,
-                Err(e) => return BorrowRec::Ret(Err(e)),
-            };
-            let x = self(ctx, x);
-            map_rec(x, |a| a.map(|b| b.coe()))
-        })))
+        Value(value::Value::FunRef(Arc::new(x(
+            move |ctx: &mut C, x: Vec<value::Value<C, BorrowForLt<C>>>| {
+                let x = match A::uncoe(unsafe { transmute::<_, Vec<Value<C>>>(x) }) {
+                    Ok(x) => x,
+                    Err(e) => return BorrowRec::Ret(Err(e)),
+                };
+                let x = self(ctx, x);
+                map_rec(x, |a| a.map(|b| b.coe()))
+            },
+        ))))
     }
     fn uncoe(x: Value<C>) -> anyhow::Result<Self> {
-        let Value::FunRef(x) = x else {
+        let value::Value::FunRef(x) = x.0 else {
             anyhow::bail!("invalid value")
         };
         Ok(Arc::new(move |ctx, a| {
             let v = a.coe();
-            let v = x(ctx, v);
+            let v = x(ctx, unsafe{transmute(v)});
             map_rec(v, |a| a.and_then(B::uncoe))
         }))
     }

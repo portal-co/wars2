@@ -1,11 +1,14 @@
 use alloc::vec;
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
+use core::marker::PhantomData;
+use core::mem::transmute;
 use core::{
     future::Future,
     iter::{empty, once},
     pin::Pin,
 };
 use anyhow::Context;
+pub use super::value;
 // use tramp::{tramp, BorrowRec, Thunk};
 pub fn ret<'a, T>(a: T) -> AsyncRec<'a, T> {
     AsyncRec::Ret(a)
@@ -51,57 +54,14 @@ impl<'a, T> AsyncRec<'a, T> {
 }
 pub use crate::CtxSpec;
 use crate::Traverse;
-#[non_exhaustive]
-pub enum Value<C: CtxSpec> {
-    I32(u32),
-    I64(u64),
-    F32(f32),
-    F64(f64),
-    FunRef(
-        Arc<
-            dyn for<'a> Fn(&'a mut C, Vec<Value<C>>) -> AsyncRec<'a, anyhow::Result<Vec<Value<C>>>>
-                + Send
-                + Sync
-                + 'static,
-        >,
-    ),
-    Null,
-    ExRef(C::ExternRef),
-    #[cfg(feature = "dumpster")]
-    Gc(crate::gc::GcCore<Value<C>>),
+use crate::func::value::ForLt;
+#[repr(transparent)]
+pub struct Value<C: CtxSpec>(pub super::value::Value<C, AsyncForLt<C>>);
+pub struct AsyncForLt<C: CtxSpec> {
+    ph: PhantomData<C>,
 }
-#[cfg(feature = "dumpster")]
-const _: () = {
-    use dumpster::Trace;
-    unsafe impl<C: CtxSpec<ExternRef: Trace>> Trace for Value<C> {
-        fn accept<V: dumpster::Visitor>(&self, visitor: &mut V) -> Result<(), ()> {
-            match self {
-                Self::ExRef(e) => e.accept(visitor),
-                Self::Gc(g) => g.accept(visitor),
-                _ => Ok(()),
-            }
-        }
-    }
-};
-impl<C: CtxSpec> Traverse<C> for Value<C> {
-    fn traverse<'a>(&'a self) -> Box<dyn Iterator<Item = &'a <C as CtxSpec>::ExternRef> + 'a> {
-        match self {
-            Value::ExRef(e) => Box::new(once(e)),
-            #[cfg(feature = "dumpster")]
-            Value::Gc(g) => g.traverse(),
-            _ => Box::new(empty()),
-        }
-    }
-    fn traverse_mut<'a>(
-        &'a mut self,
-    ) -> Box<dyn Iterator<Item = &'a mut <C as CtxSpec>::ExternRef> + 'a> {
-        match self {
-            Value::ExRef(e) => Box::new(once(e)),
-            #[cfg(feature = "dumpster")]
-            Value::Gc(g) => g.traverse_mut(),
-            _ => Box::new(empty()),
-        }
-    }
+impl<'a, C: CtxSpec> ForLt<'a> for AsyncForLt<C> {
+    type ForLt = AsyncRec<'a, anyhow::Result<Vec<Value<C>>>>;
 }
 pub fn call_ref<'a, A: CoeVec<C> + 'static, B: CoeVec<C> + 'static, C: CtxSpec + 'static>(
     ctx: &'a mut C,
@@ -111,19 +71,28 @@ pub fn call_ref<'a, A: CoeVec<C> + 'static, B: CoeVec<C> + 'static, C: CtxSpec +
     // let go: Df<A, B, C> = cast(go);
     go(ctx, a)
 }
+#[cfg(feature = "dumpster")]
+const _: () = {
+    use dumpster::Trace;
+    unsafe impl<C: CtxSpec<ExternRef: Trace>> Trace for Value<C> {
+        fn accept<V: dumpster::Visitor>(&self, visitor: &mut V) -> Result<(), ()> {
+            self.0.accept(visitor)
+        }
+    }
+};
+impl<C: CtxSpec> Traverse<C> for Value<C> {
+    fn traverse<'a>(&'a self) -> Box<dyn Iterator<Item = &'a <C as CtxSpec>::ExternRef> + 'a> {
+        self.0.traverse()
+    }
+    fn traverse_mut<'a>(
+        &'a mut self,
+    ) -> Box<dyn Iterator<Item = &'a mut <C as CtxSpec>::ExternRef> + 'a> {
+        self.0.traverse_mut()
+    }
+}
 impl<C: CtxSpec> Clone for Value<C> {
     fn clone(&self) -> Self {
-        match self {
-            Self::I32(arg0) => Self::I32(arg0.clone()),
-            Self::I64(arg0) => Self::I64(arg0.clone()),
-            Self::F32(arg0) => Self::F32(arg0.clone()),
-            Self::F64(arg0) => Self::F64(arg0.clone()),
-            Self::FunRef(arg0) => Self::FunRef(arg0.clone()),
-            Self::Null => Self::Null,
-            Self::ExRef(e) => Self::ExRef(e.clone()),
-            #[cfg(feature = "dumpster")]
-            Self::Gc(c) => Self::Gc(c.clone()),
-        }
+       Self(self.0.clone())
     }
 }
 pub trait Coe<C: CtxSpec>: Sized {
@@ -148,12 +117,12 @@ impl<C: CtxSpec> Coe<C> for Value<C> {
 impl<C: CtxSpec, D: Coe<C>> Coe<C> for Option<D> {
     fn coe(self) -> Value<C> {
         match self {
-            None => Value::Null,
+            None => Value(super::value::Value::Null),
             Some(d) => d.coe(),
         }
     }
     fn uncoe(x: Value<C>) -> anyhow::Result<Self> {
-        if let Value::Null = x {
+        if let super::value::Value::Null = &x.0 {
             return Ok(None);
         }
         return Ok(Some(D::uncoe(x)?));
@@ -163,11 +132,11 @@ macro_rules! coe_impl_prim {
     ($a:tt in $b:ident) => {
         impl<C: CtxSpec> Coe<C> for $a {
             fn coe(self) -> Value<C> {
-                Value::$b(self)
+                Value(super::value::Value::$b(self))
             }
             fn uncoe(x: Value<C>) -> anyhow::Result<Self> {
-                match x {
-                    Value::$b(a) => Ok(a),
+                match x.0 {
+                    super::value::Value::$b(a) => Ok(a),
                     _ => anyhow::bail!("invalid type"),
                 }
             }
@@ -242,13 +211,24 @@ const _: () = {
         }
         const NUM: usize = B::NUM + 1;
     }
-    impl<C: CtxSpec, V: CoeFieldVec<C>> Coe<C> for Struct<V> {
+     impl<C: CtxSpec, V: CoeFieldVec<C>> Coe<C> for Struct<V> {
         fn coe(self) -> Value<C> {
-            Value::Gc(crate::gc::GcCore::Fields(self.0.coe()))
+            Value(super::value::Value::Gc(crate::gc::GcCore::Fields(
+                match self.0.coe() {
+                    a => unsafe {
+                        use core::mem::transmute;
+                        transmute(a)
+                    },
+                },
+            )))
         }
         fn uncoe(x: Value<C>) -> anyhow::Result<Self> {
-            match x {
-                Value::Gc(crate::gc::GcCore::Fields(f)) => V::uncoe(f).map(Self),
+            match x.0 {
+                super::value::Value::Gc(crate::gc::GcCore::Fields(f)) => V::uncoe(unsafe {
+                    use core::mem::transmute;
+                    transmute(f)
+                })
+                .map(Self),
                 _ => anyhow::bail!("nota gc"),
             }
         }
@@ -312,29 +292,31 @@ impl<C: CtxSpec + 'static, A: CoeVec<C> + 'static, B: CoeVec<C> + 'static> Coe<C
     fn coe(self) -> Value<C> {
         pub fn x<
             C: CtxSpec,
-            T: for<'a> Fn(&'a mut C, Vec<Value<C>>) -> AsyncRec<'a, anyhow::Result<Vec<Value<C>>>>
+            T: for<'a> Fn(&'a mut C, Vec<super::value::Value<C,AsyncForLt<C>>>) -> AsyncRec<'a, anyhow::Result<Vec<Value<C>>>>
                 + 'static,
         >(
             a: T,
         ) -> T {
             return a;
         }
-        Value::FunRef(Arc::new(x(move |ctx, x| {
-            let x = match A::uncoe(x) {
+        Value(super::value::Value::FunRef(Arc::new(x(move |ctx, x| {
+            let x = match A::uncoe(unsafe{transmute(x)}) {
                 Ok(x) => x,
                 Err(e) => return AsyncRec::Ret(Err(e)),
             };
             let x = self(ctx, x);
             map_rec(x, |a| a.map(|b| b.coe()))
-        })))
+        }))))
     }
     fn uncoe(x: Value<C>) -> anyhow::Result<Self> {
-        let Value::FunRef(x) = x else {
+        let super::value::Value::FunRef(x) = x.0 else {
             anyhow::bail!("invalid value")
         };
         Ok(Arc::new(move |ctx, a| {
             let v = a.coe();
-            let v = x(ctx, v);
+            let v = x(ctx, unsafe{
+                transmute(v)
+            });
             map_rec(v, |a| a.and_then(B::uncoe))
         }))
     }

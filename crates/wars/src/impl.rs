@@ -771,8 +771,8 @@ impl OptsLt<'_, Module<'static>> {
                             };
                             let i = format_ident!("{i}");
                             quasiquote!{
-                                {self.fp()}::cast::<_,_,C>(match #i.clone(){
-                                    #{self.fp()}::Value::Gc(g) => g.get_field(#idx),
+                                {self.fp()}::cast::<_,_,C>(match #i.clone().0{
+                                    #{self.fp()}::value::Value::Gc(g) => g.get_field(#idx),
                                     _ => todo!()
                                 })
                             }
@@ -784,8 +784,8 @@ impl OptsLt<'_, Module<'static>> {
                             let i = format_ident!("{i}");
                             let j = format_ident!("{j}");
                             quasiquote!{
-                                match #i.clone(){
-                                    #{self.fp()}::Value::Gc(g) => g.set_field(#idx,#{self.fp()}::cast::<_,_,C>(#j.clone())),
+                                match #i.clone().0{
+                                    #{self.fp()}::value::Value::Gc(g) => g.set_field(#idx,#{self.fp()}::cast::<_,_,C>(#j.clone())),
                                     _ => todo!()
                                 }
                             }
