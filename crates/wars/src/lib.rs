@@ -10,14 +10,10 @@ use std::{
 use proc_macro2::{Span, TokenStream};
 use quasiquote::quasiquote;
 use quote::{format_ident, quote, ToTokens};
-use relooper::{reloop, BranchMode, ShapedBlock};
+
 use sha3::Digest;
 use syn::{Ident, Lifetime};
-use waffle::{
-    cfg::CFGInfo, entity::EntityRef, Block, BlockTarget, Export, ExportKind, Func, FunctionBody,
-    HeapType, ImportKind, Memory, Module, Operator, Signature, SignatureData, Terminator, Type,
-    Value, WithNullable,
-};
+
 pub(crate) mod pit;
 pub struct MemImport {
     pub expr: TokenStream,

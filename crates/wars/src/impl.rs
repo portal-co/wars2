@@ -1,4 +1,10 @@
 use super::*;
+use relooper::{reloop, BranchMode, ShapedBlock};
+use waffle::{
+    cfg::CFGInfo, entity::EntityRef, Block, BlockTarget, Export, ExportKind, Func, FunctionBody,
+    HeapType, ImportKind, Memory, Module, Operator, Signature, SignatureData, Terminator, Type,
+    Value, WithNullable,
+};
 pub(crate) fn mangle_value(a: Value, b: usize) -> Ident {
     if b == 0 {
         format_ident!("{a}")
