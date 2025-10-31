@@ -19,32 +19,32 @@ use waffle::{
     Value, WithNullable,
 };
 pub(crate) mod pit;
-pub(crate) struct MemImport {
-    pub(crate) expr: TokenStream,
+pub struct MemImport {
+    pub expr: TokenStream,
     // pub(crate) r#type: TokenStream
 }
 pub trait Plugin {
-    fn pre(&self, module: &mut OptsLt<Module<'static>>) -> anyhow::Result<()>;
+    fn pre(&self, module: &mut OptsCore) -> anyhow::Result<()>;
     fn import(
         &self,
-        opts: &OptsLt<Module<'static>>,
+        opts: &OptsCore,
         module: &str,
         name: &str,
         params: Vec<TokenStream>,
     ) -> anyhow::Result<Option<TokenStream>>;
     fn mem_import(
         &self,
-        opts: &OptsLt<Module<'static>>,
+        opts: &OptsCore,
         module: &str,
         name: &str,
     ) -> anyhow::Result<Option<MemImport>> {
         Ok(None)
     }
-    fn post(&self, opts: &OptsLt<Module<'static>>) -> anyhow::Result<TokenStream>;
-    fn bounds(&self, opts: &OptsLt<Module<'static>>) -> anyhow::Result<Option<TokenStream>> {
+    fn post(&self, opts: &OptsCore) -> anyhow::Result<TokenStream>;
+    fn bounds(&self, opts: &OptsCore) -> anyhow::Result<Option<TokenStream>> {
         Ok(None)
     }
-    fn exref_bounds(&self, opts: &OptsLt<Module<'static>>) -> anyhow::Result<Option<TokenStream>> {
+    fn exref_bounds(&self, opts: &OptsCore) -> anyhow::Result<Option<TokenStream>> {
         Ok(None)
     }
 }
@@ -126,7 +126,7 @@ impl OptsLt<'_, Module<'static>> {
             //     };
             // }
             for p in self.core.plugins.iter() {
-                if let Some(i) = p.mem_import(self, &i.module, &i.name)? {
+                if let Some(i) = p.mem_import(&self.core, &i.module, &i.name)? {
                     return Ok(quasiquote!(#{i.expr}));
                 }
             }
@@ -153,7 +153,7 @@ impl OptsLt<'_, Module<'static>> {
     ) -> anyhow::Result<TokenStream> {
         let params = params.collect::<Vec<_>>();
         for pl in self.core.plugins.iter() {
-            if let Some(a) = pl.import(self, module, name, params.clone())? {
+            if let Some(a) = pl.import(&self.core, module, name, params.clone())? {
                 return Ok(a);
             }
         }
@@ -1413,7 +1413,7 @@ pub(crate) fn go(opts: &OptsLt<'_, Module<'static>>) -> anyhow::Result<proc_macr
     let mut opts = opts.clone();
     let mut ps = vec![];
     while let Some(p) = opts.core.plugins.pop() {
-        p.pre(&mut opts)?;
+        p.pre(&mut opts.core)?;
         ps.push(p);
     }
     opts.core.plugins = ps;
@@ -1570,12 +1570,12 @@ pub(crate) fn go(opts: &OptsLt<'_, Module<'static>>) -> anyhow::Result<proc_macr
                 //     && opts.flags.contains(Flags::WASIX)
                 // {
                 // }else
-                if opts
-                    .core
-                    .plugins
-                    .iter()
-                    .any(|p| p.mem_import(&opts, &a, &b).ok().and_then(|a| a).is_some())
-                {
+                if opts.core.plugins.iter().any(|p| {
+                    p.mem_import(&opts.core, &a, &b)
+                        .ok()
+                        .and_then(|a| a)
+                        .is_some()
+                }) {
                     // } else if a.starts_with("pit") && opts.flags.contains(Flags::PIT) {
                 } else {
                     // let a = bindname(&a);
@@ -1735,7 +1735,7 @@ pub(crate) fn go(opts: &OptsLt<'_, Module<'static>>) -> anyhow::Result<proc_macr
             for plugin in opts.core.plugins.iter() {
                 if plugin
                     .import(
-                        &opts,
+                        &opts.core,
                         &i.module,
                         &i.name,
                         match &opts.module.signatures[opts.module.funcs[*f].sig()] {
@@ -1826,7 +1826,7 @@ pub(crate) fn go(opts: &OptsLt<'_, Module<'static>>) -> anyhow::Result<proc_macr
                 quote! {}
             }}  #{
                 let a = opts.core.plugins.iter().map(|p|{
-                    let b = p.bounds(&opts)?;
+                    let b = p.bounds(&opts.core)?;
                     anyhow::Ok(match b{
                         None => quote!{},
                         Some(a) => quote!{+ #a}
@@ -1838,7 +1838,7 @@ pub(crate) fn go(opts: &OptsLt<'_, Module<'static>>) -> anyhow::Result<proc_macr
             }{
                 type _ExternRef: Clone  #{
                     let a = opts.core.plugins.iter().map(|p|{
-                        let b = p.exref_bounds(&opts)?;
+                        let b = p.exref_bounds(&opts.core)?;
                         Ok(match b{
                             None => quote!{},
                             Some(a) => quote!{+ #a}
@@ -1886,7 +1886,7 @@ pub(crate) fn go(opts: &OptsLt<'_, Module<'static>>) -> anyhow::Result<proc_macr
                 }
             }
             #{
-                let a = opts.core.plugins.iter().map(|a|a.post(&opts)).collect::<anyhow::Result<Vec<_>>>()?;
+                let a = opts.core.plugins.iter().map(|a|a.post(&opts.core)).collect::<anyhow::Result<Vec<_>>>()?;
                 quote!(#(#a)*)
             }
         // }
