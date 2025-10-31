@@ -1,6 +1,6 @@
 [package]
 name = "waffle-func-reloop"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2021"
 license.workspace =  true # = "CC0-1.0"
 description.workspace =  true # = "Wasm to Rust converter"
