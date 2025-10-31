@@ -54,6 +54,8 @@ bitflags::bitflags! {
         // const BIND = 0x10;
         // const PIT = 0x20;
         // const UNSANDBOXED = 0x2;
+        const NEW_ABI = 0x100;
+        const NEW_BACKEND = 0x200;
     }
 }
 pub(crate) mod unswitch;

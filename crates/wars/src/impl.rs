@@ -25,9 +25,15 @@ pub(crate) fn bindname(a: &str) -> String {
 }
 impl OptsLt<'_, Module<'static>> {
     pub(crate) fn alloc(&self) -> TokenStream {
+        if self.core.flags.contains(Flags::NEW_BACKEND) {
+            panic!("new backend used on old backend");
+        }
         quasiquote!(#{self.core.crate_path.clone()}::_rexport::alloc)
     }
     pub(crate) fn fp(&self) -> TokenStream {
+        if self.core.flags.contains(Flags::NEW_BACKEND) {
+            panic!("new backend used on old backend");
+        }
         let root = self.core.crate_path.clone();
         if self.core.flags.contains(Flags::ASYNC) {
             quote! {
@@ -40,6 +46,9 @@ impl OptsLt<'_, Module<'static>> {
         }
     }
     pub(crate) fn host_tpit(&self) -> TokenStream {
+        if self.core.flags.contains(Flags::NEW_BACKEND) {
+            panic!("new backend used on old backend");
+        }
         match self.core.roots.get("tpit_rt") {
             None => quote! {
                 ::core::convert::Infallible
@@ -50,6 +59,9 @@ impl OptsLt<'_, Module<'static>> {
         }
     }
     pub(crate) fn mem(&self, m: Memory) -> anyhow::Result<TokenStream> {
+        if self.core.flags.contains(Flags::NEW_BACKEND) {
+            panic!("new backend used on old backend");
+        }
         if let Some(i) = self
             .module
             .imports
@@ -90,6 +102,9 @@ impl OptsLt<'_, Module<'static>> {
         name: &str,
         mut params: impl Iterator<Item = TokenStream>,
     ) -> anyhow::Result<TokenStream> {
+        if self.core.flags.contains(Flags::NEW_BACKEND) {
+            panic!("new backend used on old backend");
+        }
         let params = params.collect::<Vec<_>>();
         for pl in self.core.plugins.iter() {
             if let Some(a) = pl.import(&self.core, module, name, params.clone())? {
@@ -220,6 +235,12 @@ impl OptsLt<'_, Module<'static>> {
         });
     }
     pub(crate) fn render_ty(&self, ctx: &TokenStream, ty: Type) -> TokenStream {
+        if self.core.flags.contains(Flags::NEW_BACKEND) {
+            panic!("new backend used on old backend");
+        }
+        if self.core.flags.contains(Flags::NEW_ABI) {
+            panic!("old backend only supports old abi")
+        }
         let root = self.core.crate_path.clone();
         match ty {
             Type::I32 => quote! {u32},
@@ -264,6 +285,12 @@ impl OptsLt<'_, Module<'static>> {
         }
     }
     pub(crate) fn render_generics(&self, ctx: &TokenStream, data: &SignatureData) -> TokenStream {
+        if self.core.flags.contains(Flags::NEW_BACKEND) {
+            panic!("new backend used on old backend");
+        }
+        if self.core.flags.contains(Flags::NEW_ABI) {
+            panic!("old backend only supports old abi")
+        }
         let root = self.core.crate_path.clone();
         let SignatureData::Func {
             params, returns, ..
@@ -282,6 +309,12 @@ impl OptsLt<'_, Module<'static>> {
         }
     }
     pub(crate) fn render_fn_sig(&self, name: Ident, data: &SignatureData) -> TokenStream {
+        if self.core.flags.contains(Flags::NEW_BACKEND) {
+            panic!("new backend used on old backend");
+        }
+        if self.core.flags.contains(Flags::NEW_ABI) {
+            panic!("old backend only supports old abi")
+        }
         let root = self.core.crate_path.clone();
         let base = self.core.name.clone();
         let ctx = quote! {C};
@@ -316,9 +349,15 @@ impl OptsLt<'_, Module<'static>> {
         return x;
     }
     pub(crate) fn fname(&self, a: Func) -> Ident {
+        if self.core.flags.contains(Flags::NEW_BACKEND) {
+            panic!("new backend used on old backend");
+        }
         format_ident!("{a}_{}", bindname(self.module.funcs[a].name()))
     }
     pub(crate) fn render_fun_ref(&self, ctx: &TokenStream, x: Func) -> TokenStream {
+        if self.core.flags.contains(Flags::NEW_BACKEND) {
+            panic!("new backend used on old backend");
+        }
         let root = self.core.crate_path.clone();
         if x.is_invalid() {
             return quasiquote! {
@@ -353,6 +392,12 @@ impl OptsLt<'_, Module<'static>> {
         wrapped: Ident,
         data: &SignatureData,
     ) -> TokenStream {
+        if self.core.flags.contains(Flags::NEW_BACKEND) {
+            panic!("new backend used on old backend");
+        }
+        if self.core.flags.contains(Flags::NEW_ABI) {
+            panic!("old backend only supports old abi")
+        }
         let SignatureData::Func {
             params, returns, ..
         } = data
@@ -385,6 +430,12 @@ impl OptsLt<'_, Module<'static>> {
         }
     }
     pub(crate) fn render_self_sig_import(&self, name: Ident, data: &SignatureData) -> TokenStream {
+        if self.core.flags.contains(Flags::NEW_BACKEND) {
+            panic!("new backend used on old backend");
+        }
+        if self.core.flags.contains(Flags::NEW_ABI) {
+            panic!("old backend only supports old abi")
+        }
         let SignatureData::Func {
             params, returns, ..
         } = data
@@ -418,6 +469,9 @@ impl OptsLt<'_, Module<'static>> {
         b: &FunctionBody,
         stmts: Block,
     ) -> anyhow::Result<Vec<TokenStream>> {
+        if self.core.flags.contains(Flags::NEW_BACKEND) {
+            panic!("new backend used on old backend");
+        }
         let root = self.core.crate_path.clone();
         let fp = self.fp();
         let stmts = b.blocks[stmts].params.iter().map(|a|a.1).chain(b.blocks[stmts].insts.iter().filter_map(|a|a.pure_core())).map(|a|{
@@ -823,6 +877,9 @@ impl OptsLt<'_, Module<'static>> {
         k: Block,
         render_target: &impl Fn(&BlockTarget) -> TokenStream,
     ) -> anyhow::Result<TokenStream> {
+        if self.core.flags.contains(Flags::NEW_BACKEND) {
+            panic!("new backend used on old backend");
+        }
         let root = self.core.crate_path.clone();
         Ok(match &b.blocks[k].terminator {
             waffle::Terminator::Br { target } => render_target(target),
@@ -992,6 +1049,9 @@ impl OptsLt<'_, Module<'static>> {
         f: Func,
         x: &ShapedBlock<Block>,
     ) -> anyhow::Result<TokenStream> {
+        if self.core.flags.contains(Flags::NEW_BACKEND) {
+            panic!("new backend used on old backend");
+        }
         let root = self.core.crate_path.clone();
         let b = self.module.funcs[f].body().unwrap();
         Ok(match x {
@@ -1164,6 +1224,9 @@ impl OptsLt<'_, Module<'static>> {
         })
     }
     pub(crate) fn render_fn(&self, f: Func) -> anyhow::Result<TokenStream> {
+        if self.core.flags.contains(Flags::NEW_BACKEND) {
+            panic!("new backend used on old backend");
+        }
         let name = self.fname(f);
         let sig = self.render_fn_sig(
             name.clone(),
