@@ -641,7 +641,7 @@ dependencies = [
 
 [[package]]
 name = "wars"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "anyhow",
  "bitflags",
@@ -658,7 +658,7 @@ dependencies = [
 
 [[package]]
 name = "wars-rt"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "anyhow",
  "castaway",
