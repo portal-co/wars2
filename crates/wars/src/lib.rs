@@ -18,10 +18,10 @@ use waffle::{
     HeapType, ImportKind, Memory, Module, Operator, Signature, SignatureData, Terminator, Type,
     Value, WithNullable,
 };
-pub mod pit;
-pub struct MemImport {
-    pub expr: TokenStream,
-    // pub r#type: TokenStream
+pub(crate) mod pit;
+pub(crate) struct MemImport {
+    pub(crate) expr: TokenStream,
+    // pub(crate) r#type: TokenStream
 }
 pub trait Plugin {
     fn pre(&self, module: &mut OptsLt<Module<'static>>) -> anyhow::Result<()>;
@@ -60,16 +60,16 @@ bitflags::bitflags! {
         // const UNSANDBOXED = 0x2;
     }
 }
-pub mod unswitch;
-// pub mod wasix;
-pub fn mangle_value(a: Value, b: usize) -> Ident {
+pub(crate) mod unswitch;
+// pub(crate) mod wasix;
+pub(crate) fn mangle_value(a: Value, b: usize) -> Ident {
     if b == 0 {
         format_ident!("{a}")
     } else {
         format_ident!("{a}p{}", b - 1)
     }
 }
-pub fn bindname(a: &str) -> String {
+pub(crate) fn bindname(a: &str) -> String {
     let mut v = vec![];
     for k in a.chars() {
         if k.is_alphanumeric() {
@@ -80,15 +80,15 @@ pub fn bindname(a: &str) -> String {
     }
     return v.into_iter().collect();
 }
-// pub trait ImportCfg {
+// pub(crate) trait ImportCfg {
 //     fn import(&self, module: &str, name: &str) -> TokenStream;
 // }
-pub const INTRINSIC: &'static str = "wars_intrinsic/";
+pub(crate) const INTRINSIC: &'static str = "wars_intrinsic/";
 impl OptsLt<'_, Module<'static>> {
-    pub fn alloc(&self) -> TokenStream {
+    pub(crate) fn alloc(&self) -> TokenStream {
         quasiquote!(#{self.core.crate_path.clone()}::_rexport::alloc)
     }
-    pub fn fp(&self) -> TokenStream {
+    pub(crate) fn fp(&self) -> TokenStream {
         let root = self.core.crate_path.clone();
         if self.core.flags.contains(Flags::ASYNC) {
             quote! {
@@ -100,7 +100,7 @@ impl OptsLt<'_, Module<'static>> {
             }
         }
     }
-    pub fn host_tpit(&self) -> TokenStream {
+    pub(crate) fn host_tpit(&self) -> TokenStream {
         match self.core.roots.get("tpit_rt") {
             None => quote! {
                 ::core::convert::Infallible
@@ -110,7 +110,7 @@ impl OptsLt<'_, Module<'static>> {
             },
         }
     }
-    pub fn mem(&self, m: Memory) -> anyhow::Result<TokenStream> {
+    pub(crate) fn mem(&self, m: Memory) -> anyhow::Result<TokenStream> {
         if let Some(i) = self
             .module
             .imports
@@ -145,7 +145,7 @@ impl OptsLt<'_, Module<'static>> {
             ctx.#m2()
         })
     }
-    pub fn import(
+    pub(crate) fn import(
         &self,
         module: &str,
         name: &str,
@@ -280,7 +280,7 @@ impl OptsLt<'_, Module<'static>> {
             ctx.#id(#root::_rexport::tuple_list::tuple_list!(#(#params),*))
         });
     }
-    pub fn render_ty(&self, ctx: &TokenStream, ty: Type) -> TokenStream {
+    pub(crate) fn render_ty(&self, ctx: &TokenStream, ty: Type) -> TokenStream {
         let root = self.core.crate_path.clone();
         match ty {
             Type::I32 => quote! {u32},
@@ -324,7 +324,7 @@ impl OptsLt<'_, Module<'static>> {
             _ => quasiquote! {#{self.fp()}::Value<#ctx>},
         }
     }
-    pub fn render_generics(&self, ctx: &TokenStream, data: &SignatureData) -> TokenStream {
+    pub(crate) fn render_generics(&self, ctx: &TokenStream, data: &SignatureData) -> TokenStream {
         let root = self.core.crate_path.clone();
         let SignatureData::Func {
             params, returns, ..
@@ -342,7 +342,7 @@ impl OptsLt<'_, Module<'static>> {
             #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*),#root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)
         }
     }
-    pub fn render_fn_sig(&self, name: Ident, data: &SignatureData) -> TokenStream {
+    pub(crate) fn render_fn_sig(&self, name: Ident, data: &SignatureData) -> TokenStream {
         let root = self.core.crate_path.clone();
         let base = self.core.name.clone();
         let ctx = quote! {C};
@@ -376,10 +376,10 @@ impl OptsLt<'_, Module<'static>> {
         }
         return x;
     }
-    pub fn fname(&self, a: Func) -> Ident {
+    pub(crate) fn fname(&self, a: Func) -> Ident {
         format_ident!("{a}_{}", bindname(self.module.funcs[a].name()))
     }
-    pub fn render_fun_ref(&self, ctx: &TokenStream, x: Func) -> TokenStream {
+    pub(crate) fn render_fun_ref(&self, ctx: &TokenStream, x: Func) -> TokenStream {
         let root = self.core.crate_path.clone();
         if x.is_invalid() {
             return quasiquote! {
@@ -400,7 +400,7 @@ impl OptsLt<'_, Module<'static>> {
             })
         }
     }
-    pub fn render_self_sig(
+    pub(crate) fn render_self_sig(
         &self,
         name: Ident,
         wrapped: Ident,
@@ -408,7 +408,12 @@ impl OptsLt<'_, Module<'static>> {
     ) -> TokenStream {
         self.render_export(name, wrapped, data)
     }
-    pub fn render_export(&self, name: Ident, wrapped: Ident, data: &SignatureData) -> TokenStream {
+    pub(crate) fn render_export(
+        &self,
+        name: Ident,
+        wrapped: Ident,
+        data: &SignatureData,
+    ) -> TokenStream {
         let SignatureData::Func {
             params, returns, ..
         } = data
@@ -440,7 +445,7 @@ impl OptsLt<'_, Module<'static>> {
             }
         }
     }
-    pub fn render_self_sig_import(&self, name: Ident, data: &SignatureData) -> TokenStream {
+    pub(crate) fn render_self_sig_import(&self, name: Ident, data: &SignatureData) -> TokenStream {
         let SignatureData::Func {
             params, returns, ..
         } = data
@@ -1043,7 +1048,7 @@ impl OptsLt<'_, Module<'static>> {
             _ => todo!(),
         })
     }
-    pub fn render_relooped_block(
+    pub(crate) fn render_relooped_block(
         &self,
         f: Func,
         x: &ShapedBlock<Block>,
@@ -1219,7 +1224,7 @@ impl OptsLt<'_, Module<'static>> {
             }
         })
     }
-    pub fn render_fn(&self, f: Func) -> anyhow::Result<TokenStream> {
+    pub(crate) fn render_fn(&self, f: Func) -> anyhow::Result<TokenStream> {
         let name = self.fname(f);
         let sig = self.render_fn_sig(
             name.clone(),
@@ -1356,7 +1361,7 @@ impl OptsLt<'_, Module<'static>> {
 pub struct OptsLt<'a, B> {
     pub module: B,
     pub core: OptsCore<'a>,
-    // pub cfg: Arc<dyn ImportCfg>,
+    // pub(crate) cfg: Arc<dyn ImportCfg>,
 }
 #[derive(Clone)]
 pub struct OptsCore<'a> {
@@ -1371,7 +1376,7 @@ pub struct OptsCore<'a> {
 }
 pub type Opts<B> = OptsLt<'static, B>;
 impl<'a, X: AsRef<[u8]>> OptsLt<'a, X> {
-    pub fn to_mod(&self) -> OptsLt<'a, Module<'static>> {
+    pub(crate) fn to_mod(&self) -> OptsLt<'a, Module<'static>> {
         let opts = self;
         let mut module =
             waffle::Module::from_wasm_bytes(opts.module.as_ref(), &Default::default()).unwrap();
@@ -1389,8 +1394,8 @@ impl<'a, X: AsRef<[u8]>> OptsLt<'a, X> {
         return opts;
     }
 }
-impl<'a> ToTokens for OptsLt<'a, Module<'static>> {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
+impl<'a> OptsLt<'a, Module<'static>> {
+    pub(crate) fn to_tokens(&self, tokens: &mut TokenStream) {
         match go(self) {
             Ok(a) => a.to_tokens(tokens),
             Err(e) => syn::Error::new(Span::call_site(), e)
@@ -1399,7 +1404,12 @@ impl<'a> ToTokens for OptsLt<'a, Module<'static>> {
         }
     }
 }
-pub fn go(opts: &OptsLt<'_, Module<'static>>) -> anyhow::Result<proc_macro2::TokenStream> {
+impl<'a, X: AsRef<[u8]>> ToTokens for OptsLt<'a, X> {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        self.to_mod().to_tokens(tokens);
+    }
+}
+pub(crate) fn go(opts: &OptsLt<'_, Module<'static>>) -> anyhow::Result<proc_macro2::TokenStream> {
     let mut opts = opts.clone();
     let mut ps = vec![];
     while let Some(p) = opts.core.plugins.pop() {
@@ -1781,7 +1791,7 @@ pub fn go(opts: &OptsLt<'_, Module<'static>>) -> anyhow::Result<proc_macro2::Tok
     Ok(quasiquote! {
         // mod #internal_path{
             // extern crate alloc;
-            // pub fn alloc<T>(m: &mut  #{opts.alloc()}::collections::BTreeMap<u32,T>, x: T) -> u32{
+            // pub(crate) fn alloc<T>(m: &mut  #{opts.alloc()}::collections::BTreeMap<u32,T>, x: T) -> u32{
             //     let mut u = 0;
             //     while m.contains_key(&u){
             //         u += 1;
@@ -1857,9 +1867,9 @@ pub fn go(opts: &OptsLt<'_, Module<'static>>) -> anyhow::Result<proc_macro2::Tok
                 }
                 #(#funcs)*
             };
-            // pub struct Shim<T: #name + ?Sized>{
-            //     pub wrapped: *mut T,
-            //     pub x: #{opts.fp()}::Value<T>,
+            // pub(crate) struct Shim<T: #name + ?Sized>{
+            //     pub(crate) wrapped: *mut T,
+            //     pub(crate) x: #{opts.fp()}::Value<T>,
             // }
             impl<Target: #name + ?Sized> Default for #data<Target>{
                 fn default() -> Self{
