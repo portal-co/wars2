@@ -1,13 +1,13 @@
 # wars2
 
 ## Description
-Project wars2
+Likely a successor or alternative version of `wars`. Workspace with "crates" directory.
 
 ## Goals
-- [ ] Add project goals
+- [ ] TBD (Next-gen WASM to Rust?)
 
 ## Progress
-- [ ] Initial setup
+- [ ] Workspace setup
 
 ---
 *AI assisted*
