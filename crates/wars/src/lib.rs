@@ -92,3 +92,4 @@ pub type Opts<B> = OptsLt<'static, B>;
 // }
 pub(crate) const INTRINSIC: &'static str = "wars_intrinsic/";
 pub(crate) mod r#impl;
+pub(crate) mod new_backend;
