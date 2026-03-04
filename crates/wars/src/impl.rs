@@ -24,13 +24,13 @@ pub(crate) fn bindname(a: &str) -> String {
     return v.into_iter().collect();
 }
 impl OptsLt<'_, Module<'static>> {
-    pub(crate) fn alloc(&self) -> TokenStream {
+    pub(crate) fn old_alloc(&self) -> TokenStream {
         if self.core.flags.contains(Flags::NEW_BACKEND) {
             panic!("new backend used on old backend");
         }
         quasiquote!(#{self.core.crate_path.clone()}::_rexport::alloc)
     }
-    pub(crate) fn fp(&self) -> TokenStream {
+    pub(crate) fn old_fp(&self) -> TokenStream {
         if self.core.flags.contains(Flags::NEW_BACKEND) {
             panic!("new backend used on old backend");
         }
@@ -45,7 +45,7 @@ impl OptsLt<'_, Module<'static>> {
             }
         }
     }
-    pub(crate) fn host_tpit(&self) -> TokenStream {
+    pub(crate) fn old_host_tpit(&self) -> TokenStream {
         if self.core.flags.contains(Flags::NEW_BACKEND) {
             panic!("new backend used on old backend");
         }
@@ -58,7 +58,7 @@ impl OptsLt<'_, Module<'static>> {
             },
         }
     }
-    pub(crate) fn mem(&self, m: Memory) -> anyhow::Result<TokenStream> {
+    pub(crate) fn old_mem(&self, m: Memory) -> anyhow::Result<TokenStream> {
         if self.core.flags.contains(Flags::NEW_BACKEND) {
             panic!("new backend used on old backend");
         }
@@ -96,7 +96,7 @@ impl OptsLt<'_, Module<'static>> {
             ctx.#m2()
         })
     }
-    pub(crate) fn import(
+    pub(crate) fn old_import(
         &self,
         module: &str,
         name: &str,
@@ -121,7 +121,7 @@ impl OptsLt<'_, Module<'static>> {
         //                 if let Some((s,_)) = s.split_once("/"){
         //                     if let Some(l) = self.roots.get("linux-syscall"){
         //                         return quasiquote! {
-        //                             #{self.fp()}::ret(match #l::syscall!(#l::#{format_ident!("SYS_{s}")}, #(#params),*).try_usize(){
+        //                             #{self.old_fp()}::ret(match #l::syscall!(#l::#{format_ident!("SYS_{s}")}, #(#params),*).try_usize(){
         //                                 Ok(a) => Ok(a as u64),
         //                                 Err(e) => Err(e.into())
         //                             })
@@ -234,7 +234,7 @@ impl OptsLt<'_, Module<'static>> {
             ctx.#id(#root::_rexport::tuple_list::tuple_list!(#(#params),*))
         });
     }
-    pub(crate) fn render_ty(&self, ctx: &TokenStream, ty: Type) -> TokenStream {
+    pub(crate) fn old_render_ty(&self, ctx: &TokenStream, ty: Type) -> TokenStream {
         if self.core.flags.contains(Flags::NEW_BACKEND) {
             panic!("new backend used on old backend");
         }
@@ -263,8 +263,8 @@ impl OptsLt<'_, Module<'static>> {
                 else {
                     unreachable!()
                 };
-                let params = params.iter().map(|x| self.render_ty(ctx, *x));
-                let returns = returns.iter().map(|x| self.render_ty(ctx, *x));
+                let params = params.iter().map(|x| self.old_render_ty(ctx, *x));
+                let returns = returns.iter().map(|x| self.old_render_ty(ctx, *x));
                 let mut x = if self.core.flags.contains(Flags::ASYNC) {
                     quote! {
                         #root::func::unsync::Df<#root::_rexport::tuple_list::tuple_list_type!(#(#params),*),#root::_rexport::tuple_list::tuple_list_type!(#(#returns),*),#ctx>
@@ -281,10 +281,10 @@ impl OptsLt<'_, Module<'static>> {
                 }
                 x
             }
-            _ => quasiquote! {#{self.fp()}::Value<#ctx>},
+            _ => quasiquote! {#{self.old_fp()}::Value<#ctx>},
         }
     }
-    pub(crate) fn render_generics(&self, ctx: &TokenStream, data: &SignatureData) -> TokenStream {
+    pub(crate) fn old_render_generics(&self, ctx: &TokenStream, data: &SignatureData) -> TokenStream {
         if self.core.flags.contains(Flags::NEW_BACKEND) {
             panic!("new backend used on old backend");
         }
@@ -298,17 +298,17 @@ impl OptsLt<'_, Module<'static>> {
         else {
             todo!()
         };
-        let params2 = params.iter().map(|x| self.render_ty(ctx, *x));
+        let params2 = params.iter().map(|x| self.old_render_ty(ctx, *x));
         let param_ids = params
             .iter()
             .enumerate()
             .map(|(a, _)| format_ident!("p{a}"));
-        let returns = returns.iter().map(|x| self.render_ty(ctx, *x));
+        let returns = returns.iter().map(|x| self.old_render_ty(ctx, *x));
         quote! {
             #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*),#root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)
         }
     }
-    pub(crate) fn render_fn_sig(&self, name: Ident, data: &SignatureData) -> TokenStream {
+    pub(crate) fn old_render_fn_sig(&self, name: Ident, data: &SignatureData) -> TokenStream {
         if self.core.flags.contains(Flags::NEW_BACKEND) {
             panic!("new backend used on old backend");
         }
@@ -325,12 +325,12 @@ impl OptsLt<'_, Module<'static>> {
         else {
             todo!()
         };
-        let params2 = params.iter().map(|x| self.render_ty(&ctx, *x));
+        let params2 = params.iter().map(|x| self.old_render_ty(&ctx, *x));
         let param_ids = params
             .iter()
             .enumerate()
             .map(|(a, _)| format_ident!("p{a}"));
-        let returns = returns.iter().map(|x| self.render_ty(&ctx, *x));
+        let returns = returns.iter().map(|x| self.old_render_ty(&ctx, *x));
         let mut x = if self.core.flags.contains(Flags::ASYNC) {
             quote! {
                 fn #name<'a,C: #base + 'static>(ctx: &'a mut C, #root::_rexport::tuple_list::tuple_list!(#(#param_ids),*): #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)) -> impl #root::func::unsync::UnwrappedAsyncRec<'a,#root::_rexport::anyhow::Result<#root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)>>
@@ -348,45 +348,45 @@ impl OptsLt<'_, Module<'static>> {
         }
         return x;
     }
-    pub(crate) fn fname(&self, a: Func) -> Ident {
+    pub(crate) fn old_fname(&self, a: Func) -> Ident {
         if self.core.flags.contains(Flags::NEW_BACKEND) {
             panic!("new backend used on old backend");
         }
         format_ident!("{a}_{}", bindname(self.module.funcs[a].name()))
     }
-    pub(crate) fn render_fun_ref(&self, ctx: &TokenStream, x: Func) -> TokenStream {
+    pub(crate) fn old_render_fun_ref(&self, ctx: &TokenStream, x: Func) -> TokenStream {
         if self.core.flags.contains(Flags::NEW_BACKEND) {
             panic!("new backend used on old backend");
         }
         let root = self.core.crate_path.clone();
         if x.is_invalid() {
             return quasiquote! {
-                #{self.fp()}::da::<(),(),C,_>(|ctx,arg|panic!("invalid func"))
+                #{self.old_fp()}::da::<(),(),C,_>(|ctx,arg|panic!("invalid func"))
             };
         }
         let generics =
-            self.render_generics(ctx, &self.module.signatures[self.module.funcs[x].sig()]);
-        let x = self.fname(x);
+            self.old_render_generics(ctx, &self.module.signatures[self.module.funcs[x].sig()]);
+        let x = self.old_fname(x);
         let r = if self.core.flags.contains(Flags::ASYNC) {
             quasiquote!(#root::func::unsync::AsyncRec::wrap(res))
         } else {
             quasiquote!(res)
         };
         quasiquote! {
-            #{self.fp()}::da::<#generics,C,_>(|ctx,arg|match #x(ctx,arg){
+            #{self.old_fp()}::da::<#generics,C,_>(|ctx,arg|match #x(ctx,arg){
                 res => #r
             })
         }
     }
-    pub(crate) fn render_self_sig(
+    pub(crate) fn old_render_self_sig(
         &self,
         name: Ident,
         wrapped: Ident,
         data: &SignatureData,
     ) -> TokenStream {
-        self.render_export(name, wrapped, data)
+        self.old_render_export(name, wrapped, data)
     }
-    pub(crate) fn render_export(
+    pub(crate) fn old_render_export(
         &self,
         name: Ident,
         wrapped: Ident,
@@ -408,13 +408,13 @@ impl OptsLt<'_, Module<'static>> {
         let base = self.core.name.clone();
         let ctx = quote! {Self};
         // let data = &self.module.signatures[sig_index];
-        let params2 = params.iter().map(|x| self.render_ty(&ctx, *x));
+        let params2 = params.iter().map(|x| self.old_render_ty(&ctx, *x));
         let param_ids = params
             .iter()
             .enumerate()
             .map(|(a, _)| format_ident!("p{a}"))
             .collect::<Vec<_>>();
-        let returns = returns.iter().map(|x| self.render_ty(&ctx, *x));
+        let returns = returns.iter().map(|x| self.old_render_ty(&ctx, *x));
         if self.core.flags.contains(Flags::ASYNC) {
             quote! {
                 fn #name<'a>(self: &'a mut Self, #root::_rexport::tuple_list::tuple_list!(#(#param_ids),*): #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)) -> #root::func::unsync::AsyncRec<'a,#root::_rexport::anyhow::Result<#root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)>> where Self: 'static{
@@ -429,7 +429,7 @@ impl OptsLt<'_, Module<'static>> {
             }
         }
     }
-    pub(crate) fn render_self_sig_import(&self, name: Ident, data: &SignatureData) -> TokenStream {
+    pub(crate) fn old_render_self_sig_import(&self, name: Ident, data: &SignatureData) -> TokenStream {
         if self.core.flags.contains(Flags::NEW_BACKEND) {
             panic!("new backend used on old backend");
         }
@@ -446,13 +446,13 @@ impl OptsLt<'_, Module<'static>> {
         let base = self.core.name.clone();
         let ctx = quote! {Self};
         // let data = &self.module.signatures[sig_index];
-        let params2 = params.iter().map(|x| self.render_ty(&ctx, *x));
+        let params2 = params.iter().map(|x| self.old_render_ty(&ctx, *x));
         let param_ids = params
             .iter()
             .enumerate()
             .map(|(a, _)| format_ident!("p{a}"))
             .collect::<Vec<_>>();
-        let returns = returns.iter().map(|x| self.render_ty(&ctx, *x));
+        let returns = returns.iter().map(|x| self.old_render_ty(&ctx, *x));
         if self.core.flags.contains(Flags::ASYNC) {
             quote! {
                 fn #name<'a>(self: &'a mut Self, imp: #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)) -> #root::func::unsync::AsyncRec<'a,#root::_rexport::anyhow::Result<#root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)>> where Self: 'static;
@@ -473,7 +473,7 @@ impl OptsLt<'_, Module<'static>> {
             panic!("new backend used on old backend");
         }
         let root = self.core.crate_path.clone();
-        let fp = self.fp();
+        let fp = self.old_fp();
         let stmts = b.blocks[stmts].params.iter().map(|a|a.1).chain(b.blocks[stmts].insts.iter().filter_map(|a|a.pure_core())).map(|a|{
             let av = b.values[a].tys(&b.type_pool).iter().enumerate().map(|b|mangle_value(a,b.0));
             let b = match &b.values[a]{
@@ -495,7 +495,7 @@ impl OptsLt<'_, Module<'static>> {
                         Operator::Call { function_index } => {
                             match self.module.funcs[*function_index].body(){
                                 Some(_) => {
-                                    let func = self.fname(*function_index);
+                                    let func = self.old_fname(*function_index);
                                     let vals = vals.iter().map(|a|format_ident!("{a}"));
                                     quasiquote! {
                                         {
@@ -510,7 +510,7 @@ impl OptsLt<'_, Module<'static>> {
                                                 }
                                             }}{
                                                 Ok(a) => a,
-                                                Err(e) => return #{self.fp()}::ret(Err(e))
+                                                Err(e) => return #{self.old_fp()}::ret(Err(e))
                                             }
                                         }
                                     }
@@ -522,7 +522,7 @@ impl OptsLt<'_, Module<'static>> {
                                     .iter()
                                     .find(|a| a.kind == ImportKind::Func(*function_index))
                                     .unwrap();
-                                let x = self.import(
+                                let x = self.old_import(
                                     i.module.as_str(),
                                     i.name.as_str(),
                                     vals.iter().map(|a|format_ident!("{a}")).map(|a| quote! {#a}),
@@ -530,7 +530,7 @@ impl OptsLt<'_, Module<'static>> {
                                 quasiquote!{
                                     match #{if self.core.flags.contains(Flags::ASYNC){
                                         quasiquote!{
-                                            #{self.alloc()}::boxed::Box::pin(#x.go()).await
+                                            #{self.old_alloc()}::boxed::Box::pin(#x.go()).await
                                         }
                                     }else{
                                         quote!{
@@ -538,7 +538,7 @@ impl OptsLt<'_, Module<'static>> {
                                         }
                                     }}{
                                         Ok(a) => a,
-                                        Err(e) => return #{self.fp()}::ret(Err(e))
+                                        Err(e) => return #{self.old_fp()}::ret(Err(e))
                                     }
                                 }
                                 }
@@ -550,10 +550,10 @@ impl OptsLt<'_, Module<'static>> {
                                 // let func = format_ident!("{function_index}");
                                 let vals = vals.iter().map(|a|format_ident!("{a}"));
                                 let r = format_ident!("{r}");
-                                let g = self.render_generics(&quote! {c}, &self.module.signatures[*sig_index]);
+                                let g = self.old_render_generics(&quote! {c}, &self.module.signatures[*sig_index]);
                                 quasiquote! {
                                     {
-                                    let x = #{self.fp()}::call_ref::<#g,C>(ctx,#{self.fp()}(#r.clone()),#root::_rexport::tuple_list::tuple_list!(#(#fp::cast::<_,_,C>(#vals .clone())),*));
+                                    let x = #{self.old_fp()}::call_ref::<#g,C>(ctx,#{self.old_fp()}(#r.clone()),#root::_rexport::tuple_list::tuple_list!(#(#fp::cast::<_,_,C>(#vals .clone())),*));
                                     match #{if self.core.flags.contains(Flags::ASYNC){
                                         quote!{
                                             x.go().await
@@ -564,7 +564,7 @@ impl OptsLt<'_, Module<'static>> {
                                         }
                                     }}{
                                         Ok(a) => a,
-                                        Err(e) => return #{self.fp()}::ret(Err(e))
+                                        Err(e) => return #{self.old_fp()}::ret(Err(e))
                                     }
                                 }
                                 }
@@ -579,11 +579,11 @@ impl OptsLt<'_, Module<'static>> {
                                 let r = quote! {
                                     ctx.#t()[#r as usize]
                                 };
-                                let g = self.render_generics(&quote! {c}, &self.module.signatures[*sig_index]);
+                                let g = self.old_render_generics(&quote! {c}, &self.module.signatures[*sig_index]);
                                 quasiquote! {
                                     {
                                     let r = #r.clone();
-                                    let x = #{self.fp()}::call_ref::<#g,C>(ctx,#{self.fp()}::cast(r),#root::_rexport::tuple_list::tuple_list!(#(#fp::cast::<_,_,C>(#vals .clone())),*));
+                                    let x = #{self.old_fp()}::call_ref::<#g,C>(ctx,#{self.old_fp()}::cast(r),#root::_rexport::tuple_list::tuple_list!(#(#fp::cast::<_,_,C>(#vals .clone())),*));
                                     match #{if self.core.flags.contains(Flags::ASYNC){
                                         quote!{
                                             x.go().await
@@ -594,13 +594,13 @@ impl OptsLt<'_, Module<'static>> {
                                         }
                                     }}{
                                         Ok(a) => a,
-                                        Err(e) => return #{self.fp()}::ret(Err(e))
+                                        Err(e) => return #{self.old_fp()}::ret(Err(e))
                                     }
                                 }
                                 }
                         },
                         Operator::RefFunc { func_index } => {
-                            self.render_fun_ref(&quote! {C},*func_index)
+                            self.old_render_fun_ref(&quote! {C},*func_index)
                         },
                         waffle::Operator::MemorySize { mem } => {
                             let rt = if self.module.memories[*mem].memory64{
@@ -616,7 +616,7 @@ impl OptsLt<'_, Module<'static>> {
                             quasiquote! {
                                 #root::_rexport::tuple_list::tuple_list!(((match #root::Memory::size(ctx.#m()){
                                     Ok(a) => a,
-                                    Err(e) => return #{self.fp()}::ret(Err(e))
+                                    Err(e) => return #{self.old_fp()}::ret(Err(e))
                                 }) / #n) as #rt)
                             }
                         }
@@ -637,19 +637,19 @@ impl OptsLt<'_, Module<'static>> {
                                 {
                                 let vn = (match #root::Memory::size(ctx.#m()){
                                     Ok(a) => a,
-                                    Err(e) => return #{self.fp()}::ret(Err(e))
+                                    Err(e) => return #{self.old_fp()}::ret(Err(e))
                                 }) / #n;
                                 match #root::Memory::grow(ctx.#m(),(#a .clone() as u64) * #n){
                                     Ok(a) => a,
-                                    Err(e) => return #{self.fp()}::ret(Err(e))
+                                    Err(e) => return #{self.old_fp()}::ret(Err(e))
                                 };
                                 #root::_rexport::tuple_list::tuple_list!(vn as #rt)
                                 }
                             }
                         },
                         waffle::Operator::MemoryCopy { dst_mem, src_mem } => {
-                            let dst = self.mem(*dst_mem)?;
-                            let src = self.mem(*src_mem)?;
+                            let dst = self.old_mem(*dst_mem)?;
+                            let src = self.old_mem(*src_mem)?;
                             let dst_ptr = format_ident!("{}",vals[0].to_string());
                             let src_ptr = format_ident!("{}",vals[1].to_string());
                             let len = format_ident!("{}",vals[2].to_string());
@@ -657,28 +657,28 @@ impl OptsLt<'_, Module<'static>> {
                                 {
                                     let m = match #src.read(#src_ptr as u64,#len as u64){
                                         Ok(a) => a,
-                                        Err(e) => return #{self.fp()}::ret(Err(e))
+                                        Err(e) => return #{self.old_fp()}::ret(Err(e))
                                     }.as_ref().as_ref().to_owned();
                                     match #dst.write(#dst_ptr as u64,&m){
                                         Ok(a) => a,
-                                        Err(e) => return #{self.fp()}::ret(Err(e))
+                                        Err(e) => return #{self.old_fp()}::ret(Err(e))
                                     };
                                 ()
                                 }
                             }
                         },
                         waffle::Operator::MemoryFill { mem } => {
-                            let dst = self.mem(*mem)?;
-                            // let src = self.mem(*src_mem);
+                            let dst = self.old_mem(*mem)?;
+                            // let src = self.old_mem(*src_mem);
                             let dst_ptr = format_ident!("{}",vals[0].to_string());
                             let val = format_ident!("{}",vals[1].to_string());
                             let len = format_ident!("{}",vals[2].to_string());
                             quasiquote!{
                                 {
-                                    let m = #{self.alloc()}::vec![(#val & 0xff) as u8; #len as usize];
+                                    let m = #{self.old_alloc()}::vec![(#val & 0xff) as u8; #len as usize];
                                     match #dst.write(#dst_ptr as u64,&m){
                                         Ok(a) => a,
-                                        Err(e) => return #{self.fp()}::ret(Err(e))
+                                        Err(e) => return #{self.old_fp()}::ret(Err(e))
                                     };
                                 ()
                                 }
@@ -723,7 +723,7 @@ impl OptsLt<'_, Module<'static>> {
                             let j = format_ident!("{j}");
                             quasiquote!{
                                 {
-                                ctx.#table()[#i as usize] = #{self.fp()}::cast::<_,_,C>(#j.clone());
+                                ctx.#table()[#i as usize] = #{self.old_fp()}::cast::<_,_,C>(#j.clone());
                                 ()
                                 }
                             }
@@ -744,7 +744,7 @@ impl OptsLt<'_, Module<'static>> {
                             quasiquote!{
                                 {
                                     for _ in 0..#i{
-                                        ctx.#table().push(#{self.fp()}::cast::<_,_,C>(#j.clone()));
+                                        ctx.#table().push(#{self.old_fp()}::cast::<_,_,C>(#j.clone()));
                                     }
                                     ()
                                 }
@@ -762,7 +762,7 @@ impl OptsLt<'_, Module<'static>> {
                                 }}(#{format_ident!("{v}")})
                             });
                             quasiquote!{
-                                #{self.fp()}::cast::<_,_,C>(#root::gc::Struct(#root::_rexport::tuple_list::tuple_list!(#(#vals),*)))
+                                #{self.old_fp()}::cast::<_,_,C>(#root::gc::Struct(#root::_rexport::tuple_list::tuple_list!(#(#vals),*)))
                             }
                         }
                         Operator::StructGet { sig, idx } => {
@@ -771,8 +771,8 @@ impl OptsLt<'_, Module<'static>> {
                             };
                             let i = format_ident!("{i}");
                             quasiquote!{
-                                {self.fp()}::cast::<_,_,C>(match #i.clone().0{
-                                    #{self.fp()}::value::Value::Gc(g) => g.get_field(#idx),
+                                {self.old_fp()}::cast::<_,_,C>(match #i.clone().0{
+                                    #{self.old_fp()}::value::Value::Gc(g) => g.get_field(#idx),
                                     _ => todo!()
                                 })
                             }
@@ -785,7 +785,7 @@ impl OptsLt<'_, Module<'static>> {
                             let j = format_ident!("{j}");
                             quasiquote!{
                                 match #i.clone().0{
-                                    #{self.fp()}::value::Value::Gc(g) => g.set_field(#idx,#{self.fp()}::cast::<_,_,C>(#j.clone())),
+                                    #{self.old_fp()}::value::Value::Gc(g) => g.set_field(#idx,#{self.old_fp()}::cast::<_,_,C>(#j.clone())),
                                     _ => todo!()
                                 }
                             }
@@ -799,7 +799,7 @@ impl OptsLt<'_, Module<'static>> {
                             // let clean = o.to_string();
                             let clean = format_ident!("{}",o.to_string().split_once("<").expect("a memory op").0);
                             let m2 = mem;
-                            let mem = self.mem(m2)?;
+                            let mem = self.old_mem(m2)?;
                             let mut vals = vals.iter().map(|a|format_ident!("{a}"));
                             let rt = if self.module.memories[m2].memory64{
                                 quote! {u64}
@@ -818,7 +818,7 @@ impl OptsLt<'_, Module<'static>> {
                             quasiquote! {
                                 match #root::#clean::<#rt,_>(#mem,#(#fp::cast::<_,_,C>(#vals .clone())),*){
                                     Ok(a) => a,
-                                    Err(e) => return #{self.fp()}::ret(Err(e))
+                                    Err(e) => return #{self.old_fp()}::ret(Err(e))
                                 }
                             }
                         },
@@ -842,7 +842,7 @@ impl OptsLt<'_, Module<'static>> {
                             quasiquote! {
                                 match #root::#clean(#(#fp::cast::<_,_,C>(#vals .clone())),*){
                                     Ok(a) => a,
-                                    Err(e) => return #{self.fp()}::ret(Err(e))
+                                    Err(e) => return #{self.old_fp()}::ret(Err(e))
                                 }
                             }
                         }
@@ -928,7 +928,7 @@ impl OptsLt<'_, Module<'static>> {
                     Some(v) => {
                         let v = format_ident!("{v}");
                         quasiquote! {
-                            #{self.fp()}::cast::<_,_,C>(#v)
+                            #{self.old_fp()}::cast::<_,_,C>(#v)
                         }
                     }
                     None => {
@@ -938,7 +938,7 @@ impl OptsLt<'_, Module<'static>> {
                     }
                 });
                 quasiquote! {
-                    return #{self.fp()}::ret(Ok(#root::_rexport::tuple_list::tuple_list!(#(#values),*)))
+                    return #{self.old_fp()}::ret(Ok(#root::_rexport::tuple_list::tuple_list!(#(#values),*)))
                 }
             }
             waffle::Terminator::ReturnCall { func, args } => {
@@ -946,10 +946,10 @@ impl OptsLt<'_, Module<'static>> {
                     Some(_) => {
                         let values = args.iter().map(|v| format_ident!("{v}")).map(|a| {
                             quasiquote! {
-                                #{self.fp()}::cast::<_,_,C>(#a)
+                                #{self.old_fp()}::cast::<_,_,C>(#a)
                             }
                         });
-                        let func = self.fname(*func);
+                        let func = self.old_fname(*func);
                         if self.core.flags.contains(Flags::ASYNC) {
                             quote! {
                                 #func(ctx,#root::_rexport::tuple_list::tuple_list!(#(#values),*))
@@ -969,7 +969,7 @@ impl OptsLt<'_, Module<'static>> {
                             .iter()
                             .find(|a| a.kind == ImportKind::Func(*func))
                             .unwrap();
-                        let x = self.import(
+                        let x = self.old_import(
                             i.module.as_str(),
                             i.name.as_str(),
                             args.iter()
@@ -993,23 +993,23 @@ impl OptsLt<'_, Module<'static>> {
                 // let func = format_ident!("{function_index}");
                 let vals = vals.iter().map(|a| format_ident!("{a}")).map(|a| {
                     quasiquote! {
-                        #{self.fp()}::cast::<_,_,C>(#a)
+                        #{self.old_fp()}::cast::<_,_,C>(#a)
                     }
                 });
                 let r = format_ident!("{r}");
                 let r = quote! {
                     ctx.#t()[#r as usize]
                 };
-                let g = self.render_generics(&quote! {c}, &self.module.signatures[*sig]);
+                let g = self.old_render_generics(&quote! {c}, &self.module.signatures[*sig]);
                 if self.core.flags.contains(Flags::ASYNC) {
                     quasiquote! {
-                        return #{self.fp()}::call_ref::<#g,C>(ctx,#{self.fp()}::cast(r),#root::_rexport::tuple_list::tuple_list!(#(#{self.fp()}::cast::<_,_,C>(#vals .clone())),*))
+                        return #{self.old_fp()}::call_ref::<#g,C>(ctx,#{self.old_fp()}::cast(r),#root::_rexport::tuple_list::tuple_list!(#(#{self.old_fp()}::cast::<_,_,C>(#vals .clone())),*))
                     }
                 } else {
                     quasiquote! {
                             let r = #r.clone();
                             return #root::_rexport::tramp::BorrowRec::Call(#root::_rexport::tramp::Thunk::new(move||{
-                            #{self.fp()}::call_ref::<#g,C>(ctx,#{self.fp()}::cast(r),#root::_rexport::tuple_list::tuple_list!(#(#{self.fp()}::cast::<_,_,C>(#vals .clone())),*))
+                            #{self.old_fp()}::call_ref::<#g,C>(ctx,#{self.old_fp()}::cast(r),#root::_rexport::tuple_list::tuple_list!(#(#{self.old_fp()}::cast::<_,_,C>(#vals .clone())),*))
                         }))
                     }
                 }
@@ -1020,19 +1020,19 @@ impl OptsLt<'_, Module<'static>> {
                 // let func = format_ident!("{function_index}");
                 let vals = vals.iter().map(|a| format_ident!("{a}")).map(|a| {
                     quasiquote! {
-                        #{self.fp()}::cast::<_,_,C>(#a)
+                        #{self.old_fp()}::cast::<_,_,C>(#a)
                     }
                 });
                 let r = format_ident!("{r}");
-                let g = self.render_generics(&quote! {c}, &self.module.signatures[*sig]);
+                let g = self.old_render_generics(&quote! {c}, &self.module.signatures[*sig]);
                 if self.core.flags.contains(Flags::ASYNC) {
                     quasiquote! {
-                        return #{self.fp()}::call_ref::<#g,C>(ctx,#root::func::cast(#r.clone()),#root::_rexport::tuple_list::tuple_list!(#(#root::func::cast::<_,_,C>(#vals .clone())),*))
+                        return #{self.old_fp()}::call_ref::<#g,C>(ctx,#root::func::cast(#r.clone()),#root::_rexport::tuple_list::tuple_list!(#(#root::func::cast::<_,_,C>(#vals .clone())),*))
                     }
                 } else {
                     quasiquote! {
                             return #root::_rexport::tramp::BorrowRec::Call(#root::_rexport::tramp::Thunk::new(move||{
-                            #{self.fp()}::call_ref::<#g,C>(ctx,#root::func::cast(#r.clone()),#root::_rexport::tuple_list::tuple_list!(#(#root::func::cast::<_,_,C>(#vals .clone())),*))
+                            #{self.old_fp()}::call_ref::<#g,C>(ctx,#root::func::cast(#r.clone()),#root::_rexport::tuple_list::tuple_list!(#(#root::func::cast::<_,_,C>(#vals .clone())),*))
                         }))
                     }
                 }
@@ -1044,7 +1044,7 @@ impl OptsLt<'_, Module<'static>> {
             _ => todo!(),
         })
     }
-    pub(crate) fn render_relooped_block(
+    pub(crate) fn old_render_relooped_block(
         &self,
         f: Func,
         x: &ShapedBlock<Block>,
@@ -1096,13 +1096,13 @@ impl OptsLt<'_, Module<'static>> {
                     let immediate = s
                         .immediate
                         .as_ref()
-                        .map(|a| self.render_relooped_block(f, a.as_ref()))
+                        .map(|a| self.old_render_relooped_block(f, a.as_ref()))
                         .transpose()?
                         .unwrap_or_default();
                     let next = s
                         .next
                         .as_ref()
-                        .map(|a| self.render_relooped_block(f, a.as_ref()))
+                        .map(|a| self.old_render_relooped_block(f, a.as_ref()))
                         .transpose()?
                         .unwrap_or_default();
                     let term2 = term(
@@ -1117,14 +1117,14 @@ impl OptsLt<'_, Module<'static>> {
                         #next;
                     });
                 }
-                let fp = self.fp();
+                let fp = self.old_fp();
                 let stmts = self.render_statements(&f, b, stmts)?;
                 let render_target = |k: &BlockTarget| {
                     let vars = k.args.iter().enumerate().map(|(i, a)| {
                         let a = format_ident!("{a}");
                         let i = format_ident!("{}param{i}", k.block.to_string());
                         quasiquote! {
-                            #i = #{self.fp()}::cast::<_,_,C>(#a);
+                            #i = #{self.old_fp()}::cast::<_,_,C>(#a);
                         }
                     });
                     let br = term(
@@ -1144,13 +1144,13 @@ impl OptsLt<'_, Module<'static>> {
                 let immediate = s
                     .immediate
                     .as_ref()
-                    .map(|a| self.render_relooped_block(f, a.as_ref()))
+                    .map(|a| self.old_render_relooped_block(f, a.as_ref()))
                     .transpose()?
                     .unwrap_or_default();
                 let next = s
                     .next
                     .as_ref()
-                    .map(|a| self.render_relooped_block(f, a.as_ref()))
+                    .map(|a| self.old_render_relooped_block(f, a.as_ref()))
                     .transpose()?
                     .unwrap_or_default();
                 quote! {
@@ -1161,11 +1161,11 @@ impl OptsLt<'_, Module<'static>> {
                 }
             }
             ShapedBlock::Loop(l) => {
-                let r = self.render_relooped_block(f, &l.inner.as_ref())?;
+                let r = self.old_render_relooped_block(f, &l.inner.as_ref())?;
                 let next = l
                     .next
                     .as_ref()
-                    .map(|a| self.render_relooped_block(f, a.as_ref()))
+                    .map(|a| self.old_render_relooped_block(f, a.as_ref()))
                     .transpose()?
                     .unwrap_or_default();
                 let l = Lifetime::new(&format!("'l{}", l.loop_id), Span::call_site());
@@ -1190,7 +1190,7 @@ impl OptsLt<'_, Module<'static>> {
                     .iter()
                     .enumerate()
                     .map(|(a, i)| {
-                        let ib = self.render_relooped_block(f, &i.inner)?;
+                        let ib = self.old_render_relooped_block(f, &i.inner)?;
                         let ic = if i.break_after {
                             quote! {}
                         } else {
@@ -1223,12 +1223,12 @@ impl OptsLt<'_, Module<'static>> {
             }
         })
     }
-    pub(crate) fn render_fn(&self, f: Func) -> anyhow::Result<TokenStream> {
+    pub(crate) fn old_render_fn(&self, f: Func) -> anyhow::Result<TokenStream> {
         if self.core.flags.contains(Flags::NEW_BACKEND) {
             panic!("new backend used on old backend");
         }
-        let name = self.fname(f);
-        let sig = self.render_fn_sig(
+        let name = self.old_fname(f);
+        let sig = self.old_render_fn_sig(
             name.clone(),
             &self.module.signatures[self.module.funcs[f].sig()],
         );
@@ -1252,7 +1252,7 @@ impl OptsLt<'_, Module<'static>> {
                 .iter()
                 .find(|a| a.kind == ImportKind::Func(f))
                 .unwrap();
-            let x = self.import(
+            let x = self.old_import(
                 i.module.as_str(),
                 i.name.as_str(),
                 params.map(|a| quote! {#a}),
@@ -1268,7 +1268,7 @@ impl OptsLt<'_, Module<'static>> {
         //     return d
         //         .tys(&b.type_pool)
         //         .iter()
-        //         .map(move |ty| self.render_ty(&quote! {c}, *ty))
+        //         .map(move |ty| self.old_render_ty(&quote! {c}, *ty))
         //         .chain(once(quote! {
         //             () = ()
         //         }))
@@ -1286,12 +1286,12 @@ impl OptsLt<'_, Module<'static>> {
                     Type::Heap(WithNullable {
                         nullable,
                         value: HeapType::Sig { sig_index },
-                    }) if !nullable => self.render_fun_ref(&quote! {C}, Func::invalid()),
+                    }) if !nullable => self.old_render_fun_ref(&quote! {C}, Func::invalid()),
                     _ => quote! {
                         Default::default()
                     },
                 };
-                let ty = self.render_ty(&quote! {c}, ty.clone());
+                let ty = self.old_render_ty(&quote! {c}, ty.clone());
                 let a = format_ident!("{k}param{i}");
                 if k == b.entry {
                     let p = format_ident!("p{i}");
@@ -1338,7 +1338,7 @@ impl OptsLt<'_, Module<'static>> {
         //         );
         //     }
         // };
-        let x = self.render_relooped_block(f, reloop.as_ref())?;
+        let x = self.old_render_relooped_block(f, reloop.as_ref())?;
         let mut b = quote! {
             let mut cff: usize = 0;
             #(let mut #bpvalues);*;
@@ -1347,7 +1347,7 @@ impl OptsLt<'_, Module<'static>> {
         };
         if self.core.flags.contains(Flags::ASYNC) {
             b = quasiquote! {
-                return #{self.alloc()}::boxed::Box::pin(async move{
+                return #{self.old_alloc()}::boxed::Box::pin(async move{
                     #b
                 })
             }
@@ -1429,7 +1429,7 @@ pub(crate) fn go(opts: &OptsLt<'_, Module<'static>>) -> anyhow::Result<proc_macr
         .module
         .funcs
         .iter()
-        .map(|a| opts.render_fn(a))
+        .map(|a| opts.old_render_fn(a))
         .collect::<anyhow::Result<Vec<_>>>()?;
     let mut z = vec![];
     let mut fields = vec![];
@@ -1446,20 +1446,20 @@ pub(crate) fn go(opts: &OptsLt<'_, Module<'static>>) -> anyhow::Result<proc_macr
     //     let k = format_ident!("rust_table");
     //     fields.push(k.clone());
     //     z.push(quasiquote! {
-    //         #k:  #{opts.alloc()}::collections::BTreeMap<u32,AnyCell>,
+    //         #k:  #{opts.old_alloc()}::collections::BTreeMap<u32,AnyCell>,
     //     })
     // }
     let mut init = vec![];
     for (t, d) in opts.module.tables.entries() {
-        // let dty = opts.render_ty(&quote! {Target}, d.ty.clone());
+        // let dty = opts.old_render_ty(&quote! {Target}, d.ty.clone());
         let n = Ident::new(&t.to_string(), Span::call_site());
         z.push(quasiquote! {
-            #n: #{opts.alloc()}::vec::Vec<#{opts.fp()}::Value<Target>>
+            #n: #{opts.old_alloc()}::vec::Vec<#{opts.old_fp()}::Value<Target>>
         });
         fields.push(n.clone());
         sfields.push(n.clone());
         if let Some(e) = d.func_elements.as_ref() {
-            let e = e.iter().map(|x| opts.render_fun_ref(&quote! {C}, *x));
+            let e = e.iter().map(|x| opts.old_render_fun_ref(&quote! {C}, *x));
             init.push(if opts.core.flags.contains(Flags::ASYNC) {
                 quote! {
                     #(ctx.data().#n.push(#root::func::unsync::Coe::coe(#e)));*;
@@ -1471,7 +1471,7 @@ pub(crate) fn go(opts: &OptsLt<'_, Module<'static>>) -> anyhow::Result<proc_macr
             })
         }
         fs.push(quasiquote! {
-            fn #n(&mut self) -> &mut #{opts.alloc()}::vec::Vec<#{opts.fp()}::Value<Self>>{
+            fn #n(&mut self) -> &mut #{opts.old_alloc()}::vec::Vec<#{opts.old_fp()}::Value<Self>>{
                 &mut self.data().#n
             }
         })
@@ -1479,7 +1479,7 @@ pub(crate) fn go(opts: &OptsLt<'_, Module<'static>>) -> anyhow::Result<proc_macr
     // eprintln!("before globals");
     for (g, d) in opts.module.globals.entries() {
         let n = Ident::new(&g.to_string(), Span::call_site());
-        let t = opts.render_ty(&quote! {Target}, d.ty.clone());
+        let t = opts.old_render_ty(&quote! {Target}, d.ty.clone());
         z.push(quote! {
             #n : #t
         });
@@ -1521,7 +1521,7 @@ pub(crate) fn go(opts: &OptsLt<'_, Module<'static>>) -> anyhow::Result<proc_macr
                 };
                 if d.shared {
                     t = quasiquote! {
-                        #{opts.alloc()}::sync::Arc<#root::Mutex<#t>>
+                        #{opts.old_alloc()}::sync::Arc<#root::Mutex<#t>>
                     };
                 };
                 z.push(quote! {
@@ -1561,7 +1561,7 @@ pub(crate) fn go(opts: &OptsLt<'_, Module<'static>>) -> anyhow::Result<proc_macr
                     };
                     if d.shared {
                         p = quasiquote! {
-                            #{opts.alloc()}::sync::Arc<#root::Mutex<#p>>
+                            #{opts.old_alloc()}::sync::Arc<#root::Mutex<#p>>
                         };
                     };
                     fs.push(quote! {
@@ -1611,12 +1611,12 @@ pub(crate) fn go(opts: &OptsLt<'_, Module<'static>>) -> anyhow::Result<proc_macr
         match &xp.kind {
             ExportKind::Func(f) => {
                 let f = *f;
-                let d = opts.render_export(
+                let d = opts.old_render_export(
                     format_ident!("{}", xp.name),
-                    opts.fname(f),
+                    opts.old_fname(f),
                     &opts.module.signatures[opts.module.funcs[f].sig()],
                 );
-                let e = opts.render_self_sig_import(
+                let e = opts.old_render_self_sig_import(
                     format_ident!("{}", xp.name),
                     &opts.module.signatures[opts.module.funcs[f].sig()],
                 );
@@ -1629,11 +1629,11 @@ pub(crate) fn go(opts: &OptsLt<'_, Module<'static>>) -> anyhow::Result<proc_macr
             }
             ExportKind::Table(t) => {
                 let d = &opts.module.tables[*t];
-                let tt = opts.render_ty(&quote! {Self}, d.ty);
+                let tt = opts.old_render_ty(&quote! {Self}, d.ty);
                 let x = Ident::new(&t.to_string(), Span::call_site());
                 let mn = Ident::new(&xp.name, Span::call_site());
                 let i = quote! {
-                    fn #mn(&mut self) -> &mut #{opts.alloc()}::vec::Vec<#tt>{
+                    fn #mn(&mut self) -> &mut #{opts.old_alloc()}::vec::Vec<#tt>{
                         return &mut self.z().#x;
                     }
                 };
@@ -1641,7 +1641,7 @@ pub(crate) fn go(opts: &OptsLt<'_, Module<'static>>) -> anyhow::Result<proc_macr
             }
             ExportKind::Global(g) => {
                 let d = &opts.module.globals[*g];
-                let t = opts.render_ty(&quote! {Self}, d.ty);
+                let t = opts.old_render_ty(&quote! {Self}, d.ty);
                 let x = Ident::new(&g.to_string(), Span::call_site());
                 let mn = Ident::new(&xp.name, Span::call_site());
                 let i = quote! {
@@ -1665,7 +1665,7 @@ pub(crate) fn go(opts: &OptsLt<'_, Module<'static>>) -> anyhow::Result<proc_macr
                         };
                         if opts.module.memories[*m].shared{
                             p = quasiquote!{
-                                #{opts.alloc()}::sync::Arc<#root::Mutex<#p>>
+                                #{opts.old_alloc()}::sync::Arc<#root::Mutex<#p>>
                             };
                         };
                         p
@@ -1722,7 +1722,7 @@ pub(crate) fn go(opts: &OptsLt<'_, Module<'static>>) -> anyhow::Result<proc_macr
                 }
             }
             let name = format_ident!("{}_{}", bindname(&i.module), bindname(&i.name));
-            fs.push(opts.render_self_sig_import(
+            fs.push(opts.old_render_self_sig_import(
                 name,
                 &opts.module.signatures[opts.module.funcs[*f].sig()],
             ));
@@ -1762,7 +1762,7 @@ pub(crate) fn go(opts: &OptsLt<'_, Module<'static>>) -> anyhow::Result<proc_macr
     Ok(quasiquote! {
         // mod #internal_path{
             // extern crate alloc;
-            // pub(crate) fn alloc<T>(m: &mut  #{opts.alloc()}::collections::BTreeMap<u32,T>, x: T) -> u32{
+            // pub(crate) fn old_alloc<T>(m: &mut  #{opts.old_alloc()}::collections::BTreeMap<u32,T>, x: T) -> u32{
             //     let mut u = 0;
             //     while m.contains_key(&u){
             //         u += 1;
@@ -1774,24 +1774,24 @@ pub(crate) fn go(opts: &OptsLt<'_, Module<'static>>) -> anyhow::Result<proc_macr
                 #(#z),*
             }
             impl<Target: #name + ?Sized> #root::Traverse<Target> for #data<Target>{
-                fn traverse<'a>(&'a self) ->#{opts.alloc()}::boxed::Box<dyn Iterator<Item = &'a Target::ExternRef> + 'a>{
+                fn traverse<'a>(&'a self) ->#{opts.old_alloc()}::boxed::Box<dyn Iterator<Item = &'a Target::ExternRef> + 'a>{
                     return #{
                         let x = sfields.iter().map(|a|quote!{#root::Traverse::<Target>::traverse(&self.#a)});
                         quasiquote!{
-                            #{opts.alloc()}::boxed::Box::new(::core::iter::empty()#(.chain(#x))*)
+                            #{opts.old_alloc()}::boxed::Box::new(::core::iter::empty()#(.chain(#x))*)
                         }
                     }
                 }
-                fn traverse_mut<'a>(&'a mut self) -> #{opts.alloc()}::boxed::Box<dyn Iterator<Item = &'a mut Target::ExternRef> + 'a>{
+                fn traverse_mut<'a>(&'a mut self) -> #{opts.old_alloc()}::boxed::Box<dyn Iterator<Item = &'a mut Target::ExternRef> + 'a>{
                     return #{
                         let x = sfields.iter().map(|a|quote!{#root::Traverse::<Target>::traverse_mut(&mut self.#a)});
                         quasiquote!{
-                            #{opts.alloc()}::boxed::Box::new(::core::iter::empty()#(.chain(#x))*)
+                            #{opts.old_alloc()}::boxed::Box::new(::core::iter::empty()#(.chain(#x))*)
                         }
                     }
                 }
             }
-            pub trait #name: #{opts.fp()}::CtxSpec<ExternRef = Self::_ExternRef> #{if opts.core.flags.contains(Flags::ASYNC){
+            pub trait #name: #{opts.old_fp()}::CtxSpec<ExternRef = Self::_ExternRef> #{if opts.core.flags.contains(Flags::ASYNC){
                 quote! {+ Send + Sync}
             }else{
                 quote! {}
@@ -1840,7 +1840,7 @@ pub(crate) fn go(opts: &OptsLt<'_, Module<'static>>) -> anyhow::Result<proc_macr
             };
             // pub(crate) struct Shim<T: #name + ?Sized>{
             //     pub(crate) wrapped: *mut T,
-            //     pub(crate) x: #{opts.fp()}::Value<T>,
+            //     pub(crate) x: #{opts.old_fp()}::Value<T>,
             // }
             impl<Target: #name + ?Sized> Default for #data<Target>{
                 fn default() -> Self{
