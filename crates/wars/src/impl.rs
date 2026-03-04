@@ -1,10 +1,11 @@
 use super::*;
 use relooper::{reloop, BranchMode, ShapedBlock};
 use waffle::{
-    cfg::CFGInfo, entity::EntityRef, Block, BlockTarget, Export, ExportKind, Func, FunctionBody,
-    HeapType, ImportKind, Memory, Module, Operator, Signature, SignatureData, Terminator, Type,
-    Value, WithNullable,
+    cfg::CFGInfo, entity::EntityRef, frontend::ModuleExt, passes, Block, BlockTarget, Export,
+    ExportKind, Func, FunctionBody, HeapType, ImportKind, Memory, Module, Operator, Signature,
+    SignatureData, Terminator, Type, Value, WithNullable,
 };
+use waffle_passes_shared::maxssa;
 pub(crate) fn mangle_value(a: Value, b: usize) -> Ident {
     if b == 0 {
         format_ident!("{a}")
@@ -284,7 +285,11 @@ impl OptsLt<'_, Module<'static>> {
             _ => quasiquote! {#{self.old_fp()}::Value<#ctx>},
         }
     }
-    pub(crate) fn old_render_generics(&self, ctx: &TokenStream, data: &SignatureData) -> TokenStream {
+    pub(crate) fn old_render_generics(
+        &self,
+        ctx: &TokenStream,
+        data: &SignatureData,
+    ) -> TokenStream {
         if self.core.flags.contains(Flags::NEW_BACKEND) {
             panic!("new backend used on old backend");
         }
@@ -429,7 +434,11 @@ impl OptsLt<'_, Module<'static>> {
             }
         }
     }
-    pub(crate) fn old_render_self_sig_import(&self, name: Ident, data: &SignatureData) -> TokenStream {
+    pub(crate) fn old_render_self_sig_import(
+        &self,
+        name: Ident,
+        data: &SignatureData,
+    ) -> TokenStream {
         if self.core.flags.contains(Flags::NEW_BACKEND) {
             panic!("new backend used on old backend");
         }
@@ -881,7 +890,7 @@ impl OptsLt<'_, Module<'static>> {
             panic!("new backend used on old backend");
         }
         let root = self.core.crate_path.clone();
-        Ok(match &b.blocks[k].terminator {
+        Ok(match &b.blocks[k].terminator.terminator {
             waffle::Terminator::Br { target } => render_target(target),
             waffle::Terminator::CondBr {
                 cond,
@@ -1369,7 +1378,7 @@ impl<'a, X: AsRef<[u8]>> OptsLt<'a, X> {
         let mut module = module.without_orig_bytes();
         // module.per_func_body(|b|unswitch::go(b)); //TODO: reloop better and make it not needed
         // eprintln!("{}",module.display());
-        module.per_func_body(|f| f.convert_to_max_ssa(None));
+        module.per_func_body(|f| maxssa::run(f, None, &CFGInfo::new(f)));
         let opts = OptsLt {
             // crate_path: opts.crate_path.clone(),
             module,

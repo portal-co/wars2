@@ -5,8 +5,13 @@ resolver = "3"
 [workspace.package]
 license = "CC0-1.0"
 description = "Wasm to Rust converter"
-version = "0.8.1"
+version = "0.9.0-alpha.1"
 
 [workspace.dependencies]
-waffle = { package = "portal-pc-waffle", version = "^0.5.5" }
+waffle = { package = "portal-pc-waffle", version = "^0.6.0-alpha.1", features = ["frontend","backend"], git = "https://github.com/portal-co/waffle-.git" }
+waffle-ir = { package = "portal-pc-waffle-ir", version = "^0.6.0-alpha.1", features = ["frontend","backend"], git = "https://github.com/portal-co/waffle-.git" }
+waffle-entity = { package = "portal-pc-waffle-entity", version = "^0.6.0-alpha.1", features = ["frontend","backend"], git = "https://github.com/portal-co/waffle-.git" }
+waffle-passes-shared = { package = "portal-pc-waffle-passes-shared", version = "^0.6.0-alpha.1", git = "https://github.com/portal-co/waffle-.git" }
 wasmparser = "0.240.0"
+
+waffle-func-reloop = { version = "0.9.0-alpha.1", path = "crates/waffle-func-reloop" }

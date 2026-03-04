@@ -22,13 +22,13 @@ pub fn go(f: &mut FunctionBody) {
                 value,
                 targets,
                 default,
-            } = a.1.clone().terminator
+            } = a.1.clone().terminator.terminator
             {
                 break 'gather (a.0, value, targets.clone(), default);
             }
         };
         drop(i);
-        f.blocks[b].terminator = Terminator::None;
+        f.blocks[b].terminator.terminator = Terminator::None;
         if targets.len() == 0 {
             f.set_terminator(b, Terminator::Br { target: default });
             continue;
