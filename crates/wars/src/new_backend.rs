@@ -5,7 +5,7 @@
 //! collects all section data, and emits ABI v0 Rust tokens in a single pass.
 
 use super::*;
-use crate::shared::{self, bindname, alloc, fp, FuncSig, FuncSigOwned};
+use crate::shared::{self, bindname, alloc, fp, FuncSig, FuncSigOwned, WasmTy};
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, ToTokens};
 use syn::{Ident, Lifetime};
@@ -35,7 +35,7 @@ enum ImportKind {
 /// Everything we need from the wasm binary, collected in one streaming pass.
 struct ParsedModule {
     /// All function types from the type section (by type-section index).
-    types: Vec<FuncSigOwned>,
+    types: Vec<FuncSigOwned<ValType>>,
     /// All imports, in order.
     imports: Vec<ImportEntry>,
     /// type-section index for every function (imports first, then defined).
@@ -88,7 +88,7 @@ struct DataSeg {
 
 impl ParsedModule {
     fn parse(bytes: &[u8]) -> anyhow::Result<Self> {
-        let mut types: Vec<FuncSigOwned> = vec![];
+        let mut types: Vec<FuncSigOwned<ValType>> = vec![];
         let mut imports: Vec<ImportEntry> = vec![];
         let mut func_type_idx: Vec<u32> = vec![];
         let mut table_types: Vec<TableType> = vec![];
@@ -115,11 +115,11 @@ impl ParsedModule {
                         for sub_ty in rec_group.types() {
                             // Only care about func types; skip everything else.
                             let sig = match &sub_ty.composite_type.inner {
-                                CompositeInnerType::Func(f) => FuncSigOwned {
+                                CompositeInnerType::Func(f) => FuncSigOwned::<ValType> {
                                     params: f.params().to_vec(),
                                     returns: f.results().to_vec(),
                                 },
-                                _ => FuncSigOwned { params: vec![], returns: vec![] },
+                                _ => FuncSigOwned::<ValType> { params: vec![], returns: vec![] },
                             };
                             types.push(sig);
                         }
@@ -292,8 +292,8 @@ impl ParsedModule {
         })
     }
 
-    /// Resolve a function index to its `FuncSigOwned`.
-    fn func_sig(&self, func_idx: u32) -> &FuncSigOwned {
+    /// Resolve a function index to its `FuncSigOwned<ValType>`.
+    fn func_sig(&self, func_idx: u32) -> &FuncSigOwned<ValType> {
         let ty_idx = self.func_type_idx[func_idx as usize];
         &self.types[ty_idx as usize]
     }

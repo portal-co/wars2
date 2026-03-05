@@ -1,7 +1,9 @@
-//! Helpers shared between the waffle backend and the wasmparser backend.
+//! Helpers shared between backends.
 //!
 //! These functions depend only on `OptsCore` plus a thin `FuncSig` description
-//! of a wasm function type; they do not touch any backend-specific IR.
+//! of a wasm function type expressed via the `WasmTy` trait.  No backend
+//! crate (`wasmparser`, `waffle`, …) is imported at the module level, so this
+//! file compiles under any feature combination.
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -28,8 +30,7 @@ pub(crate) fn bindname(a: &str) -> String {
 
 // ── Core token helpers ────────────────────────────────────────────────────────
 
-/// Path to `wars_rt::_rexport::alloc` (so generated code doesn't hard-code
-/// the crate name).
+/// Path to `wars_rt::_rexport::alloc`.
 pub(crate) fn alloc(core: &OptsCore<'_>) -> TokenStream {
     let p = core.crate_path.clone();
     quote! { #p::_rexport::alloc }
@@ -46,24 +47,69 @@ pub(crate) fn fp(core: &OptsCore<'_>) -> TokenStream {
     }
 }
 
+// ── WasmTy trait ─────────────────────────────────────────────────────────────
+
+/// Abstraction over a single WebAssembly value type that is sufficient for
+/// ABI v0 code generation.
+///
+/// Implementing this trait is the only thing a backend-specific value-type
+/// needs to do in order to use the generic rendering helpers below.
+pub(crate) trait WasmTy: Copy {
+    /// Is this an `i32` / `u32` in the generated Rust code?
+    fn is_i32(self) -> bool;
+    /// Is this an `i64` / `u64`?
+    fn is_i64(self) -> bool;
+    /// Is this `f32`?
+    fn is_f32(self) -> bool;
+    /// Is this `f64`?
+    fn is_f64(self) -> bool;
+    /// Is this `v128`?
+    fn is_v128(self) -> bool;
+    /// Is this a reference type (funcref, externref, …)?
+    fn is_ref(self) -> bool;
+}
+
+/// Map a single value type (described via `WasmTy`) to the Rust token stream
+/// used in ABI v0 signatures.
+///
+/// `ctx` is the token stream used as the context type parameter (e.g.
+/// `quote!{C}`).
+pub(crate) fn render_ty<T: WasmTy>(core: &OptsCore<'_>, ctx: &TokenStream, ty: T) -> TokenStream {
+    let fp_ts = fp(core);
+    if ty.is_i32() {
+        quote! { u32 }
+    } else if ty.is_i64() {
+        quote! { u64 }
+    } else if ty.is_f32() {
+        quote! { f32 }
+    } else if ty.is_f64() {
+        quote! { f64 }
+    } else if ty.is_v128() {
+        quote! { u128 }
+    } else {
+        // All reference types fall back to Value<C>.
+        quote! { #fp_ts::Value<#ctx> }
+    }
+}
+
 // ── Type description ──────────────────────────────────────────────────────────
 
-/// A wasm function signature expressed in wasmparser `ValType` terms.
+/// A wasm function signature over an abstract value type `T`.
 #[derive(Clone)]
-pub(crate) struct FuncSig<'a> {
-    pub params: &'a [wasmparser::ValType],
-    pub returns: &'a [wasmparser::ValType],
+pub(crate) struct FuncSig<'a, T> {
+    pub params: &'a [T],
+    pub returns: &'a [T],
 }
 
-/// A wasm function signature expressed with wasmparser `ValType` (owned).
+/// Owned variant of `FuncSig`.
 #[derive(Clone)]
-pub(crate) struct FuncSigOwned {
-    pub params: Vec<wasmparser::ValType>,
-    pub returns: Vec<wasmparser::ValType>,
+pub(crate) struct FuncSigOwned<T> {
+    pub params: Vec<T>,
+    pub returns: Vec<T>,
 }
 
-impl FuncSigOwned {
-    pub fn as_ref(&self) -> FuncSig<'_> {
+impl<T: Clone> FuncSigOwned<T> {
+    pub fn as_ref(&self) -> FuncSig<'_, T> {
         FuncSig {
             params: &self.params,
             returns: &self.returns,
@@ -71,38 +117,15 @@ impl FuncSigOwned {
     }
 }
 
-/// Map a single `wasmparser::ValType` to the Rust type used in ABI v0 signatures.
-///
-/// `ctx` is the token stream used as the context type parameter (e.g. `quote!{C}`).
-pub(crate) fn render_ty(core: &OptsCore<'_>, ctx: &TokenStream, ty: wasmparser::ValType) -> TokenStream {
-    use wasmparser::{HeapType, RefType, ValType};
-    let root = core.crate_path.clone();
-    let fp_ts = fp(core);
-    match ty {
-        ValType::I32 => quote! { u32 },
-        ValType::I64 => quote! { u64 },
-        ValType::F32 => quote! { f32 },
-        ValType::F64 => quote! { f64 },
-        ValType::V128 => quote! { u128 },
-        ValType::Ref(r) => {
-            // funcref with a concrete signature → typed Df<P,R,C>
-            // all other ref types → Value<C>
-            match r.heap_type() {
-                HeapType::Concrete(_) | HeapType::Abstract { .. } => {
-                    // We can only lower typed funcrefs when we have a full
-                    // ParsedModule; fall back to Value<C> here (the caller
-                    // can specialise further if needed).
-                    quote! { #fp_ts::Value<#ctx> }
-                }
-                _ => quote! { #fp_ts::Value<#ctx> },
-            }
-        }
-    }
-}
+// ── Generic rendering helpers ─────────────────────────────────────────────────
 
 /// Emit the `tuple_list_type!(P0, P1, …), tuple_list_type!(R0, R1, …)` generic
 /// arguments for `Df` / `call_ref`.
-pub(crate) fn render_generics(core: &OptsCore<'_>, ctx: &TokenStream, sig: FuncSig<'_>) -> TokenStream {
+pub(crate) fn render_generics<T: WasmTy>(
+    core: &OptsCore<'_>,
+    ctx: &TokenStream,
+    sig: FuncSig<'_, T>,
+) -> TokenStream {
     let root = core.crate_path.clone();
     let params = sig.params.iter().map(|t| render_ty(core, ctx, *t));
     let returns = sig.returns.iter().map(|t| render_ty(core, ctx, *t));
@@ -118,12 +141,21 @@ pub(crate) fn render_generics(core: &OptsCore<'_>, ctx: &TokenStream, sig: FuncS
 /// fn name<'a, C: Base + 'static>(ctx: &'a mut C, tuple_list!(p0, p1): tuple_list_type!(T0, T1))
 ///     -> BorrowRec<'a, anyhow::Result<tuple_list_type!(R0, R1)>>
 /// ```
-pub(crate) fn render_fn_sig(core: &OptsCore<'_>, name: Ident, sig: FuncSig<'_>) -> TokenStream {
+pub(crate) fn render_fn_sig<T: WasmTy>(
+    core: &OptsCore<'_>,
+    name: Ident,
+    sig: FuncSig<'_, T>,
+) -> TokenStream {
     let root = core.crate_path.clone();
     let base = core.name.clone();
     let ctx = quote! { C };
     let params2: Vec<_> = sig.params.iter().map(|t| render_ty(core, &ctx, *t)).collect();
-    let param_ids: Vec<_> = sig.params.iter().enumerate().map(|(i, _)| format_ident!("p{i}")).collect();
+    let param_ids: Vec<_> = sig
+        .params
+        .iter()
+        .enumerate()
+        .map(|(i, _)| format_ident!("p{i}"))
+        .collect();
     let returns: Vec<_> = sig.returns.iter().map(|t| render_ty(core, &ctx, *t)).collect();
     let mut x = if core.flags.contains(Flags::ASYNC) {
         quote! {
@@ -157,11 +189,11 @@ pub(crate) fn render_fn_sig(core: &OptsCore<'_>, name: Ident, sig: FuncSig<'_>) 
 
 /// Emit an export method implementation (inside the blanket `impl<C: Foo>
 /// FooImpl for C`), delegating to the free function `wrapped`.
-pub(crate) fn render_export(
+pub(crate) fn render_export<T: WasmTy>(
     core: &OptsCore<'_>,
     name: Ident,
     wrapped: Ident,
-    sig: FuncSig<'_>,
+    sig: FuncSig<'_, T>,
 ) -> TokenStream {
     let root = core.crate_path.clone();
     let ctx = quote! { Self };
@@ -205,10 +237,10 @@ pub(crate) fn render_export(
 }
 
 /// Emit an export method *declaration* (inside the `FooImpl` trait).
-pub(crate) fn render_self_sig_import(
+pub(crate) fn render_self_sig_import<T: WasmTy>(
     core: &OptsCore<'_>,
     name: Ident,
-    sig: FuncSig<'_>,
+    sig: FuncSig<'_, T>,
 ) -> TokenStream {
     let root = core.crate_path.clone();
     let ctx = quote! { Self };
@@ -235,4 +267,16 @@ pub(crate) fn render_self_sig_import(
             where Self: 'static;
         }
     }
+}
+
+// ── WasmTy impl for wasmparser::ValType ──────────────────────────────────────
+
+#[cfg(feature = "wasmparser")]
+impl WasmTy for wasmparser::ValType {
+    #[inline] fn is_i32(self) -> bool { matches!(self, wasmparser::ValType::I32) }
+    #[inline] fn is_i64(self) -> bool { matches!(self, wasmparser::ValType::I64) }
+    #[inline] fn is_f32(self) -> bool { matches!(self, wasmparser::ValType::F32) }
+    #[inline] fn is_f64(self) -> bool { matches!(self, wasmparser::ValType::F64) }
+    #[inline] fn is_v128(self) -> bool { matches!(self, wasmparser::ValType::V128) }
+    #[inline] fn is_ref(self) -> bool { matches!(self, wasmparser::ValType::Ref(_)) }
 }
