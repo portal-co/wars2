@@ -50,7 +50,7 @@ pub(crate) fn mem(opts: &Opts<'_>, m: Memory) -> anyhow::Result<TokenStream> {
         // }
         for p in opts.core.plugins.iter() {
             if let Some(i) = p.mem_import(&opts.core, &i.module, &i.name)? {
-                return Ok(quasiquote!(#{i.expr}));
+                return Ok(i.expr);
             }
         }
         // if self.flags.contains(Flags::WASIX) {
@@ -313,21 +313,22 @@ pub(crate) fn fname(opts: &Opts<'_>, a: Func) -> Ident {
 }
 pub(crate) fn render_fun_ref(opts: &Opts<'_>, ctx: &TokenStream, x: Func) -> TokenStream {
     let root = opts.core.crate_path.clone();
+    let fp_ts = fp(opts);
     if x.is_invalid() {
-        return quasiquote! {
-            #{fp(opts)}::da::<(),(),C,_>(|ctx,arg|panic!("invalid func"))
+        return quote! {
+            #fp_ts::da::<(),(),C,_>(|ctx,arg|panic!("invalid func"))
         };
     }
     let generics =
         render_generics(opts, ctx, &opts.module.signatures[opts.module.funcs[x].sig()]);
     let x = fname(opts, x);
     let r = if opts.core.flags.contains(Flags::ASYNC) {
-        quasiquote!(#root::func::unsync::AsyncRec::wrap(res))
+        quote! { #root::func::unsync::AsyncRec::wrap(res) }
     } else {
-        quasiquote!(res)
+        quote! { res }
     };
-    quasiquote! {
-        #{fp(opts)}::da::<#generics,C,_>(|ctx,arg|match #x(ctx,arg){
+    quote! {
+        #fp_ts::da::<#generics,C,_>(|ctx,arg|match #x(ctx,arg){
             res => #r
         })
     }
@@ -447,20 +448,18 @@ fn render_statements(
                             Some(_) => {
                                 let func = fname(opts, *function_index);
                                 let vals = vals.iter().map(|a|format_ident!("{a}"));
-                                quasiquote! {
+                                let tramp = if opts.core.flags.contains(Flags::ASYNC) {
+                                    quote! { x.go().await }
+                                } else {
+                                    quote! { #root::_rexport::tramp::tramp(x) }
+                                };
+                                let fp_ts2 = fp(opts);
+                                quote! {
                                     {
                                         let x = #func(ctx,#root::_rexport::tuple_list::tuple_list!(#(#fp_ts::cast::<_,_,C>(#vals .clone())),*));
-                                        match #{if opts.core.flags.contains(Flags::ASYNC){
-                                            quote!{
-                                                x.go().await
-                                            }
-                                        }else{
-                                            quote!{
-                                                #root::_rexport::tramp::tramp(x)
-                                            }
-                                        }}{
+                                        match #tramp {
                                             Ok(a) => a,
-                                            Err(e) => return #{fp(opts)}::ret(Err(e))
+                                            Err(e) => return #fp_ts2::ret(Err(e))
                                         }
                                     }
                                 }
@@ -472,102 +471,90 @@ fn render_statements(
                                 .iter()
                                 .find(|a| a.kind == ImportKind::Func(*function_index))
                                 .unwrap();
-                            let x = import(
-                                opts,
-                                i.module.as_str(),
-                                i.name.as_str(),
-                                vals.iter().map(|a|format_ident!("{a}")).map(|a| quote! {#a}),
-                            )?;
-                            quasiquote!{
-                                match #{if opts.core.flags.contains(Flags::ASYNC){
-                                    quasiquote!{
-                                        #{alloc(opts)}::boxed::Box::pin(#x.go()).await
+                                let x = import(
+                                    opts,
+                                    i.module.as_str(),
+                                    i.name.as_str(),
+                                    vals.iter().map(|a|format_ident!("{a}")).map(|a| quote! {#a}),
+                                )?;
+                                let alloc_ts = alloc(opts);
+                                let fp_ts2 = fp(opts);
+                                let tramp = if opts.core.flags.contains(Flags::ASYNC) {
+                                    quote! { #alloc_ts::boxed::Box::pin(#x.go()).await }
+                                } else {
+                                    quote! { #root::_rexport::tramp::tramp(#x) }
+                                };
+                                quote! {
+                                    match #tramp {
+                                        Ok(a) => a,
+                                        Err(e) => return #fp_ts2::ret(Err(e))
                                     }
-                                }else{
-                                    quote!{
-                                        #root::_rexport::tramp::tramp(#x)
-                                    }
-                                }}{
-                                    Ok(a) => a,
-                                    Err(e) => return #{fp(opts)}::ret(Err(e))
                                 }
-                            }
                             }
                         }
                     },
                     Operator::CallRef { sig_index } => {
                         let mut vals = vals.to_owned();
                         let r = vals.pop().expect(" a ref to call");
-                            // let func = format_ident!("{function_index}");
-                            let vals = vals.iter().map(|a|format_ident!("{a}"));
-                            let r = format_ident!("{r}");
-                            let g = render_generics(opts, &quote! {c}, &opts.module.signatures[*sig_index]);
-                            quasiquote! {
-                                {
-                                let x = #{fp(opts)}::call_ref::<#g,C>(ctx,#{fp(opts)}(#r.clone()),#root::_rexport::tuple_list::tuple_list!(#(#fp_ts::cast::<_,_,C>(#vals .clone())),*));
-                                match #{if opts.core.flags.contains(Flags::ASYNC){
-                                    quote!{
-                                        x.go().await
-                                    }
-                                }else{
-                                    quote!{
-                                        #root::_rexport::tramp::tramp(x)
-                                    }
-                                }}{
+                        let vals = vals.iter().map(|a|format_ident!("{a}"));
+                        let r = format_ident!("{r}");
+                        let g = render_generics(opts, &quote! {c}, &opts.module.signatures[*sig_index]);
+                        let fp_ts2 = fp(opts);
+                        let tramp = if opts.core.flags.contains(Flags::ASYNC) {
+                            quote! { x.go().await }
+                        } else {
+                            quote! { #root::_rexport::tramp::tramp(x) }
+                        };
+                        quote! {
+                            {
+                                let x = #fp_ts2::call_ref::<#g,C>(ctx,#fp_ts2(#r.clone()),#root::_rexport::tuple_list::tuple_list!(#(#fp_ts::cast::<_,_,C>(#vals .clone())),*));
+                                match #tramp {
                                     Ok(a) => a,
-                                    Err(e) => return #{fp(opts)}::ret(Err(e))
+                                    Err(e) => return #fp_ts2::ret(Err(e))
                                 }
                             }
-                            }
+                        }
                     },
                     Operator::CallIndirect { sig_index, table_index } => {
                         let t = format_ident!("{table_index}");
                         let mut vals = vals.to_owned();
                         let r = vals.pop().expect("a table index to call");
-                            // let func = format_ident!("{function_index}");
-                            let vals = vals.iter().map(|a|format_ident!("{a}"));
-                            let r = format_ident!("{r}");
-                            let r = quote! {
-                                ctx.#t()[#r as usize]
-                            };
-                            let g = render_generics(opts, &quote! {c}, &opts.module.signatures[*sig_index]);
-                            quasiquote! {
-                                {
+                        let vals = vals.iter().map(|a|format_ident!("{a}"));
+                        let r = format_ident!("{r}");
+                        let r = quote! { ctx.#t()[#r as usize] };
+                        let g = render_generics(opts, &quote! {c}, &opts.module.signatures[*sig_index]);
+                        let fp_ts2 = fp(opts);
+                        let tramp = if opts.core.flags.contains(Flags::ASYNC) {
+                            quote! { x.go().await }
+                        } else {
+                            quote! { #root::_rexport::tramp::tramp(x) }
+                        };
+                        quote! {
+                            {
                                 let r = #r.clone();
-                                let x = #{fp(opts)}::call_ref::<#g,C>(ctx,#{fp(opts)}::cast(r),#root::_rexport::tuple_list::tuple_list!(#(#fp_ts::cast::<_,_,C>(#vals .clone())),*));
-                                match #{if opts.core.flags.contains(Flags::ASYNC){
-                                    quote!{
-                                        x.go().await
-                                    }
-                                }else{
-                                    quote!{
-                                        #root::_rexport::tramp::tramp(x)
-                                    }
-                                }}{
+                                let x = #fp_ts2::call_ref::<#g,C>(ctx,#fp_ts2::cast(r),#root::_rexport::tuple_list::tuple_list!(#(#fp_ts::cast::<_,_,C>(#vals .clone())),*));
+                                match #tramp {
                                     Ok(a) => a,
-                                    Err(e) => return #{fp(opts)}::ret(Err(e))
+                                    Err(e) => return #fp_ts2::ret(Err(e))
                                 }
                             }
-                            }
+                        }
                     },
                     Operator::RefFunc { func_index } => {
                         render_fun_ref(opts, &quote! {C},*func_index)
                     },
                     waffle::Operator::MemorySize { mem: mem_idx } => {
-                        let rt = if opts.module.memories[*mem_idx].memory64{
-                            quote! {u64}
-                        }else{
-                            quote! {u32}
-                        };
-                        let n = match &opts.module.memories[*mem_idx].page_size_log2{
+                        let rt = if opts.module.memories[*mem_idx].memory64 { quote! {u64} } else { quote! {u32} };
+                        let n = match &opts.module.memories[*mem_idx].page_size_log2 {
                             None => 65536usize,
-                            Some(a) => 2usize.pow(*a)
+                            Some(a) => 2usize.pow(*a),
                         };
                         let m = Ident::new(&mem_idx.to_string(), Span::call_site());
-                        quasiquote! {
+                        let fp_ts2 = fp(opts);
+                        quote! {
                             #root::_rexport::tuple_list::tuple_list!(((match #root::Memory::size(ctx.#m()){
                                 Ok(a) => a,
-                                Err(e) => return #{fp(opts)}::ret(Err(e))
+                                Err(e) => return #fp_ts2::ret(Err(e))
                             }) / #n) as #rt)
                         }
                     }
@@ -575,26 +562,23 @@ fn render_statements(
                         let m = Ident::new(&mem_idx.to_string(), Span::call_site());
                         let a = vals[0];
                         let a = format_ident!("{a}");
-                        let rt = if opts.module.memories[*mem_idx].memory64{
-                            quote! {u64}
-                        }else{
-                            quote! {u32}
-                        };
-                        let n = match &opts.module.memories[*mem_idx].page_size_log2{
+                        let rt = if opts.module.memories[*mem_idx].memory64 { quote! {u64} } else { quote! {u32} };
+                        let n = match &opts.module.memories[*mem_idx].page_size_log2 {
                             None => 65536usize,
-                            Some(a) => 2usize.pow(*a)
+                            Some(a) => 2usize.pow(*a),
                         };
-                        quasiquote! {
+                        let fp_ts2 = fp(opts);
+                        quote! {
                             {
-                            let vn = (match #root::Memory::size(ctx.#m()){
-                                Ok(a) => a,
-                                Err(e) => return #{fp(opts)}::ret(Err(e))
-                            }) / #n;
-                            match #root::Memory::grow(ctx.#m(),(#a .clone() as u64) * #n){
-                                Ok(a) => a,
-                                Err(e) => return #{fp(opts)}::ret(Err(e))
-                            };
-                            #root::_rexport::tuple_list::tuple_list!(vn as #rt)
+                                let vn = (match #root::Memory::size(ctx.#m()){
+                                    Ok(a) => a,
+                                    Err(e) => return #fp_ts2::ret(Err(e))
+                                }) / #n;
+                                match #root::Memory::grow(ctx.#m(),(#a .clone() as u64) * #n){
+                                    Ok(a) => a,
+                                    Err(e) => return #fp_ts2::ret(Err(e))
+                                };
+                                #root::_rexport::tuple_list::tuple_list!(vn as #rt)
                             }
                         }
                     },
@@ -604,34 +588,36 @@ fn render_statements(
                         let dst_ptr = format_ident!("{}",vals[0].to_string());
                         let src_ptr = format_ident!("{}",vals[1].to_string());
                         let len = format_ident!("{}",vals[2].to_string());
-                        quasiquote!{
+                        let fp_ts2 = fp(opts);
+                        quote! {
                             {
                                 let m = match #src.read(#src_ptr as u64,#len as u64){
                                     Ok(a) => a,
-                                    Err(e) => return #{fp(opts)}::ret(Err(e))
+                                    Err(e) => return #fp_ts2::ret(Err(e))
                                 }.as_ref().as_ref().to_owned();
                                 match #dst.write(#dst_ptr as u64,&m){
                                     Ok(a) => a,
-                                    Err(e) => return #{fp(opts)}::ret(Err(e))
+                                    Err(e) => return #fp_ts2::ret(Err(e))
                                 };
-                            ()
+                                ()
                             }
                         }
                     },
                     waffle::Operator::MemoryFill { mem: mem_idx } => {
                         let dst = mem(opts, *mem_idx)?;
-                        // let src = mem(opts, *src_mem);
                         let dst_ptr = format_ident!("{}",vals[0].to_string());
                         let val = format_ident!("{}",vals[1].to_string());
                         let len = format_ident!("{}",vals[2].to_string());
-                        quasiquote!{
+                        let alloc_ts = alloc(opts);
+                        let fp_ts2 = fp(opts);
+                        quote! {
                             {
-                                let m = #{alloc(opts)}::vec![(#val & 0xff) as u8; #len as usize];
+                                let m = #alloc_ts::vec![(#val & 0xff) as u8; #len as usize];
                                 match #dst.write(#dst_ptr as u64,&m){
                                     Ok(a) => a,
-                                    Err(e) => return #{fp(opts)}::ret(Err(e))
+                                    Err(e) => return #fp_ts2::ret(Err(e))
                                 };
-                            ()
+                                ()
                             }
                         }
                     },
@@ -654,28 +640,22 @@ fn render_statements(
                     }
                     Operator::TableGet { table_index } => {
                         let table = format_ident!("{table_index}");
-                        let [i,..] = vals else{
-                            unreachable!()
-                        };
+                        let [i,..] = vals else { unreachable!() };
                         let i = format_ident!("{i}");
-                        // let j = format_ident!("{j}");
-                        quasiquote!{
-                            {
-                            (ctx.#table()[#i as usize].clone(),())
-                            }
+                        quote! {
+                            { (ctx.#table()[#i as usize].clone(),()) }
                         }
                     },
                     Operator::TableSet { table_index } => {
                         let table = format_ident!("{table_index}");
-                        let [i,j,..] = vals else{
-                            unreachable!()
-                        };
+                        let [i,j,..] = vals else { unreachable!() };
                         let i = format_ident!("{i}");
                         let j = format_ident!("{j}");
-                        quasiquote!{
+                        let fp_ts2 = fp(opts);
+                        quote! {
                             {
-                            ctx.#table()[#i as usize] = #{fp(opts)}::cast::<_,_,C>(#j.clone());
-                            ()
+                                ctx.#table()[#i as usize] = #fp_ts2::cast::<_,_,C>(#j.clone());
+                                ()
                             }
                         }
                     },
@@ -687,56 +667,52 @@ fn render_statements(
                     },
                     Operator::TableGrow { table_index } => {
                         let table = format_ident!("{table_index}");
-                        let [i,j,..] = vals else{
-                            unreachable!()
-                        };
+                        let [i,j,..] = vals else { unreachable!() };
                         let i = format_ident!("{i}");
                         let j = format_ident!("{j}");
-                        quasiquote!{
+                        let fp_ts2 = fp(opts);
+                        quote! {
                             {
                                 for _ in 0..#i{
-                                    ctx.#table().push(#{fp(opts)}::cast::<_,_,C>(#j.clone()));
+                                    ctx.#table().push(#fp_ts2::cast::<_,_,C>(#j.clone()));
                                 }
                                 ()
                             }
                         }
                     },
                     Operator::StructNew { sig } => {
+                        let fp_ts2 = fp(opts);
                         let vals = vals.iter().zip(match &opts.module.signatures[*sig]{
                             SignatureData::Struct { fields,.. } => fields.iter(),
                             _ => anyhow::bail!("not a struct")
-                        }).map(|(v,f)|quasiquote!{
-                            #root::gc::#{if f.mutable{
-                                quote!{Mut}
-                            }else{
-                                quote!{Const}
-                            }}(#{format_ident!("{v}")})
+                        }).map(|(v,f)| {
+                            let mutability = if f.mutable { quote! { Mut } } else { quote! { Const } };
+                            let vn = format_ident!("{v}");
+                            quote! { #root::gc::#mutability(#vn) }
                         });
-                        quasiquote!{
-                            #{fp(opts)}::cast::<_,_,C>(#root::gc::Struct(#root::_rexport::tuple_list::tuple_list!(#(#vals),*)))
+                        quote! {
+                            #fp_ts2::cast::<_,_,C>(#root::gc::Struct(#root::_rexport::tuple_list::tuple_list!(#(#vals),*)))
                         }
                     }
                     Operator::StructGet { sig, idx } => {
-                        let [i,..] = vals else{
-                            unreachable!()
-                        };
+                        let [i,..] = vals else { unreachable!() };
                         let i = format_ident!("{i}");
-                        quasiquote!{
-                            {fp(opts)}::cast::<_,_,C>(match #i.clone().0{
-                                #{fp(opts)}::value::Value::Gc(g) => g.get_field(#idx),
+                        let fp_ts2 = fp(opts);
+                        quote! {
+                            #fp_ts2::cast::<_,_,C>(match #i.clone().0{
+                                #fp_ts2::value::Value::Gc(g) => g.get_field(#idx),
                                 _ => todo!()
                             })
                         }
                     }
                     Operator::StructSet { sig, idx } => {
-                        let [i,j,..] = vals else{
-                            unreachable!()
-                        };
+                        let [i,j,..] = vals else { unreachable!() };
                         let i = format_ident!("{i}");
                         let j = format_ident!("{j}");
-                        quasiquote!{
+                        let fp_ts2 = fp(opts);
+                        quote! {
                             match #i.clone().0{
-                                #{fp(opts)}::value::Value::Gc(g) => g.set_field(#idx,#{fp(opts)}::cast::<_,_,C>(#j.clone())),
+                                #fp_ts2::value::Value::Gc(g) => g.set_field(#idx,#fp_ts2::cast::<_,_,C>(#j.clone())),
                                 _ => todo!()
                             }
                         }
@@ -766,10 +742,11 @@ fn render_statements(
                         };
                         let val = vals.next().expect("the runtime memory offset");
                         let vals = once(quote! {(#val.clone() + #offset)}).chain(vals.map(|w|quote!{#w}));
-                        quasiquote! {
+                        let fp_ts2 = fp(opts);
+                        quote! {
                             match #root::#clean::<#rt,_>(#mem_tok,#(#fp_ts::cast::<_,_,C>(#vals .clone())),*){
                                 Ok(a) => a,
-                                Err(e) => return #{fp(opts)}::ret(Err(e))
+                                Err(e) => return #fp_ts2::ret(Err(e))
                             }
                         }
                     },
@@ -787,13 +764,13 @@ fn render_statements(
                         }
                     },
                     _ => {
-                        // let clean = o.to_string();
                         let clean = format_ident!("{o}");
                         let vals = vals.iter().map(|a|format_ident!("{a}"));
-                        quasiquote! {
+                        let fp_ts2 = fp(opts);
+                        quote! {
                             match #root::#clean(#(#fp_ts::cast::<_,_,C>(#vals .clone())),*){
                                 Ok(a) => a,
-                                Err(e) => return #{fp(opts)}::ret(Err(e))
+                                Err(e) => return #fp_ts2::ret(Err(e))
                             }
                         }
                     }
@@ -871,31 +848,24 @@ fn render_term(
             }
         }
         waffle::Terminator::Return { values } => {
-            // let values = values.iter().map(|v| format_ident!("{v}"));
+            let fp_ts = fp(opts);
             let values = b.rets.iter().enumerate().map(|(a, _)| match values.get(a) {
                 Some(v) => {
                     let v = format_ident!("{v}");
-                    quasiquote! {
-                        #{fp(opts)}::cast::<_,_,C>(#v)
-                    }
+                    quote! { #fp_ts::cast::<_,_,C>(#v) }
                 }
-                None => {
-                    quote! {
-                        ::core::default::Default::default()
-                    }
-                }
+                None => quote! { ::core::default::Default::default() },
             });
-            quasiquote! {
-                return #{fp(opts)}::ret(Ok(#root::_rexport::tuple_list::tuple_list!(#(#values),*)))
+            quote! {
+                return #fp_ts::ret(Ok(#root::_rexport::tuple_list::tuple_list!(#(#values),*)))
             }
         }
         waffle::Terminator::ReturnCall { func, args } => {
             match opts.module.funcs[*func].body() {
                 Some(_) => {
+                    let fp_ts = fp(opts);
                     let values = args.iter().map(|v| format_ident!("{v}")).map(|a| {
-                        quasiquote! {
-                            #{fp(opts)}::cast::<_,_,C>(#a)
-                        }
+                        quote! { #fp_ts::cast::<_,_,C>(#a) }
                     });
                     let func = fname(opts, *func);
                     if opts.core.flags.contains(Flags::ASYNC) {
@@ -939,26 +909,22 @@ fn render_term(
             let t = format_ident!("{table}");
             let mut vals = args.to_owned();
             let r = vals.pop().expect("a table index to call");
-            // let func = format_ident!("{function_index}");
+            let fp_ts = fp(opts);
             let vals = vals.iter().map(|a| format_ident!("{a}")).map(|a| {
-                quasiquote! {
-                    #{fp(opts)}::cast::<_,_,C>(#a)
-                }
+                quote! { #fp_ts::cast::<_,_,C>(#a) }
             });
             let r = format_ident!("{r}");
-            let r = quote! {
-                ctx.#t()[#r as usize]
-            };
+            let r = quote! { ctx.#t()[#r as usize] };
             let g = render_generics(opts, &quote! {c}, &opts.module.signatures[*sig]);
             if opts.core.flags.contains(Flags::ASYNC) {
-                quasiquote! {
-                    return #{fp(opts)}::call_ref::<#g,C>(ctx,#{fp(opts)}::cast(r),#root::_rexport::tuple_list::tuple_list!(#(#{fp(opts)}::cast::<_,_,C>(#vals .clone())),*))
+                quote! {
+                    return #fp_ts::call_ref::<#g,C>(ctx,#fp_ts::cast(r),#root::_rexport::tuple_list::tuple_list!(#(#fp_ts::cast::<_,_,C>(#vals .clone())),*))
                 }
             } else {
-                quasiquote! {
-                        let r = #r.clone();
-                        return #root::_rexport::tramp::BorrowRec::Call(#root::_rexport::tramp::Thunk::new(move||{
-                        #{fp(opts)}::call_ref::<#g,C>(ctx,#{fp(opts)}::cast(r),#root::_rexport::tuple_list::tuple_list!(#(#{fp(opts)}::cast::<_,_,C>(#vals .clone())),*))
+                quote! {
+                    let r = #r.clone();
+                    return #root::_rexport::tramp::BorrowRec::Call(#root::_rexport::tramp::Thunk::new(move||{
+                        #fp_ts::call_ref::<#g,C>(ctx,#fp_ts::cast(r),#root::_rexport::tuple_list::tuple_list!(#(#fp_ts::cast::<_,_,C>(#vals .clone())),*))
                     }))
                 }
             }
@@ -966,22 +932,20 @@ fn render_term(
         waffle::Terminator::ReturnCallRef { sig, args } => {
             let mut vals = args.clone();
             let r = vals.pop().expect(" a ref to call");
-            // let func = format_ident!("{function_index}");
+            let fp_ts = fp(opts);
             let vals = vals.iter().map(|a| format_ident!("{a}")).map(|a| {
-                quasiquote! {
-                    #{fp(opts)}::cast::<_,_,C>(#a)
-                }
+                quote! { #fp_ts::cast::<_,_,C>(#a) }
             });
             let r = format_ident!("{r}");
             let g = render_generics(opts, &quote! {c}, &opts.module.signatures[*sig]);
             if opts.core.flags.contains(Flags::ASYNC) {
-                quasiquote! {
-                    return #{fp(opts)}::call_ref::<#g,C>(ctx,#root::func::cast(#r.clone()),#root::_rexport::tuple_list::tuple_list!(#(#root::func::cast::<_,_,C>(#vals .clone())),*))
+                quote! {
+                    return #fp_ts::call_ref::<#g,C>(ctx,#root::func::cast(#r.clone()),#root::_rexport::tuple_list::tuple_list!(#(#root::func::cast::<_,_,C>(#vals .clone())),*))
                 }
             } else {
-                quasiquote! {
-                        return #root::_rexport::tramp::BorrowRec::Call(#root::_rexport::tramp::Thunk::new(move||{
-                        #{fp(opts)}::call_ref::<#g,C>(ctx,#root::func::cast(#r.clone()),#root::_rexport::tuple_list::tuple_list!(#(#root::func::cast::<_,_,C>(#vals .clone())),*))
+                quote! {
+                    return #root::_rexport::tramp::BorrowRec::Call(#root::_rexport::tramp::Thunk::new(move||{
+                        #fp_ts::call_ref::<#g,C>(ctx,#root::func::cast(#r.clone()),#root::_rexport::tuple_list::tuple_list!(#(#root::func::cast::<_,_,C>(#vals .clone())),*))
                     }))
                 }
             }
@@ -1066,12 +1030,11 @@ pub(crate) fn render_relooped_block(
             let fp_ts = fp(opts);
             let stmts = render_statements(opts, &f, b, stmts)?;
             let render_target = |k: &BlockTarget| {
+                let fp_ts = fp(opts);
                 let vars = k.args.iter().enumerate().map(|(i, a)| {
                     let a = format_ident!("{a}");
                     let i = format_ident!("{}param{i}", k.block.to_string());
-                    quasiquote! {
-                        #i = #{fp(opts)}::cast::<_,_,C>(#a);
-                    }
+                    quote! { #i = #fp_ts::cast::<_,_,C>(#a); }
                 });
                 let br = term(
                     &s.branches
@@ -1243,8 +1206,9 @@ pub(crate) fn render_fn(opts: &Opts<'_>, f: Func) -> anyhow::Result<TokenStream>
         panic!("should have returned");
     };
     if opts.core.flags.contains(Flags::ASYNC) {
-        b = quasiquote! {
-            return #{alloc(opts)}::boxed::Box::pin(async move{
+        let alloc_ts = alloc(opts);
+        b = quote! {
+            return #alloc_ts::boxed::Box::pin(async move{
                 #b
             })
         }
@@ -1318,8 +1282,10 @@ pub(crate) fn go(
     let mut init = vec![];
     for (t, d) in opts.module.tables.entries() {
         let n = Ident::new(&t.to_string(), Span::call_site());
-        z.push(quasiquote! {
-            #n: #{alloc(&opts)}::vec::Vec<#{fp(&opts)}::Value<Target>>
+        let alloc_ts = alloc(&opts);
+        let fp_ts = fp(&opts);
+        z.push(quote! {
+            #n: #alloc_ts::vec::Vec<#fp_ts::Value<Target>>
         });
         fields.push(n.clone());
         sfields.push(n.clone());
@@ -1335,8 +1301,8 @@ pub(crate) fn go(
                 }
             })
         }
-        fs.push(quasiquote! {
-            fn #n(&mut self) -> &mut #{alloc(&opts)}::vec::Vec<#{fp(&opts)}::Value<Self>>{
+        fs.push(quote! {
+            fn #n(&mut self) -> &mut #alloc_ts::vec::Vec<#fp_ts::Value<Self>>{
                 &mut self.data().#n
             }
         })
@@ -1371,13 +1337,10 @@ pub(crate) fn go(
         let n = Ident::new(&me.to_string(), Span::call_site());
         match import_mod {
             None => {
-                let mut t = quote! {
-                    Vec<u8>
-                };
+                let mut t = quote! { Vec<u8> };
                 if d.shared {
-                    t = quasiquote! {
-                        #{alloc(&opts)}::sync::Arc<#root::Mutex<#t>>
-                    };
+                    let alloc_ts = alloc(&opts);
+                    t = quote! { #alloc_ts::sync::Arc<#root::Mutex<#t>> };
                 };
                 z.push(quote! {
                     #n : #t
@@ -1406,9 +1369,8 @@ pub(crate) fn go(
                         }
                     };
                     if d.shared {
-                        p = quasiquote! {
-                            #{alloc(&opts)}::sync::Arc<#root::Mutex<#p>>
-                        };
+                        let alloc_ts = alloc(&opts);
+                        p = quote! { #alloc_ts::sync::Arc<#root::Mutex<#p>> };
                     };
                     fs.push(quote! {
                         fn #m<'a>(&'a mut self) -> &'a mut (#p);
@@ -1493,22 +1455,17 @@ pub(crate) fn go(
             ExportKind::Memory(m) => {
                 let x = Ident::new(&m.to_string(), Span::call_site());
                 let mn = Ident::new(&xp.name, Span::call_site());
-                let i = quasiquote! {
-                    fn #mn<'a>(&'a mut self) -> &'a mut (#{
-                        let mut p = if opts.core.flags.contains(Flags::LEGACY) {
-                            quote! {dyn #root::Memory + 'a}
-                        } else {
-                            quote! {
-                                impl #root::Memory + 'a
-                            }
-                        };
-                        if opts.module.memories[*m].shared{
-                            p = quasiquote!{
-                                #{alloc(&opts)}::sync::Arc<#root::Mutex<#p>>
-                            };
-                        };
-                        p
-                    }){
+                let mut p = if opts.core.flags.contains(Flags::LEGACY) {
+                    quote! { dyn #root::Memory + 'a }
+                } else {
+                    quote! { impl #root::Memory + 'a }
+                };
+                if opts.module.memories[*m].shared {
+                    let alloc_ts = alloc(&opts);
+                    p = quote! { #alloc_ts::sync::Arc<#root::Mutex<#p>> };
+                };
+                let i = quote! {
+                    fn #mn<'a>(&'a mut self) -> &'a mut (#p) {
                         return self.#x()
                     }
                 };
@@ -1555,105 +1512,73 @@ pub(crate) fn go(
             #a: self.#a.clone()
         }
     });
-    Ok(quasiquote! {
-        // mod #internal_path{
-            // extern crate alloc;
-            // pub(crate) fn old_alloc<T>(m: &mut  #{alloc(&opts)}::collections::BTreeMap<u32,T>, x: T) -> u32{
-            //     let mut u = 0;
-            //     while m.contains_key(&u){
-            //         u += 1;
-            //     };
-            //     m.insert(u,x);
-            //     return u;
-            // }
-            pub struct #data<Target: #name + ?Sized>{
-                #(#z),*
+    let alloc_ts = alloc(&opts);
+    let fp_ts = fp(&opts);
+    let name_impl = format_ident!("{name}Impl");
+    let async_send_sync = if opts.core.flags.contains(Flags::ASYNC) {
+        quote! { + Send + Sync }
+    } else {
+        quote! {}
+    };
+    let plugin_bounds = opts.core.plugins.iter().map(|p| {
+        let b = p.bounds(&opts.core)?;
+        anyhow::Ok(match b { None => quote!{}, Some(a) => quote!{+ #a} })
+    }).collect::<anyhow::Result<Vec<_>>>()?;
+    let plugin_exref_bounds = opts.core.plugins.iter().map(|p| {
+        let b = p.exref_bounds(&opts.core)?;
+        anyhow::Ok(match b { None => quote!{}, Some(a) => quote!{+ #a} })
+    }).collect::<anyhow::Result<Vec<_>>>()?;
+    let traverse_chains = sfields.iter().map(|a| quote!{ #root::Traverse::<Target>::traverse(&self.#a) });
+    let traverse_mut_chains = sfields.iter().map(|a| quote!{ #root::Traverse::<Target>::traverse_mut(&mut self.#a) });
+    let post_plugins = opts.core.plugins.iter().map(|a| a.post(&opts.core)).collect::<anyhow::Result<Vec<_>>>()?;
+    Ok(quote! {
+        pub struct #data<Target: #name + ?Sized>{
+            #(#z),*
+        }
+        impl<Target: #name + ?Sized> #root::Traverse<Target> for #data<Target>{
+            fn traverse<'a>(&'a self) -> #alloc_ts::boxed::Box<dyn Iterator<Item = &'a Target::ExternRef> + 'a>{
+                return #alloc_ts::boxed::Box::new(::core::iter::empty()#(.chain(#traverse_chains))*);
             }
-            impl<Target: #name + ?Sized> #root::Traverse<Target> for #data<Target>{
-                fn traverse<'a>(&'a self) ->#{alloc(&opts)}::boxed::Box<dyn Iterator<Item = &'a Target::ExternRef> + 'a>{
-                    return #{
-                        let x = sfields.iter().map(|a|quote!{#root::Traverse::<Target>::traverse(&self.#a)});
-                        quasiquote!{
-                            #{alloc(&opts)}::boxed::Box::new(::core::iter::empty()#(.chain(#x))*)
-                        }
-                    }
-                }
-                fn traverse_mut<'a>(&'a mut self) -> #{alloc(&opts)}::boxed::Box<dyn Iterator<Item = &'a mut Target::ExternRef> + 'a>{
-                    return #{
-                        let x = sfields.iter().map(|a|quote!{#root::Traverse::<Target>::traverse_mut(&mut self.#a)});
-                        quasiquote!{
-                            #{alloc(&opts)}::boxed::Box::new(::core::iter::empty()#(.chain(#x))*)
-                        }
-                    }
-                }
+            fn traverse_mut<'a>(&'a mut self) -> #alloc_ts::boxed::Box<dyn Iterator<Item = &'a mut Target::ExternRef> + 'a>{
+                return #alloc_ts::boxed::Box::new(::core::iter::empty()#(.chain(#traverse_mut_chains))*);
             }
-            pub trait #name: #{fp(&opts)}::CtxSpec<ExternRef = Self::_ExternRef> #{if opts.core.flags.contains(Flags::ASYNC){
-                quote! {+ Send + Sync}
-            }else{
-                quote! {}
-            }}  #{
-                let a = opts.core.plugins.iter().map(|p|{
-                    let b = p.bounds(&opts.core)?;
-                    anyhow::Ok(match b{
-                        None => quote!{},
-                        Some(a) => quote!{+ #a}
-                    })
-                }).collect::<anyhow::Result<Vec<_>>>()?;
-                quote!{
-                    #(#a)*
-                }
-            }{
-                type _ExternRef: Clone  #{
-                    let a = opts.core.plugins.iter().map(|p|{
-                        let b = p.exref_bounds(&opts.core)?;
-                        Ok(match b{
-                            None => quote!{},
-                            Some(a) => quote!{+ #a}
-                        })
-                    }).collect::<anyhow::Result<Vec<_>>>()?;
-                    quote!{
-                        #(#a)*
-                    }
-                };
-                fn data(&mut self) -> &mut #data<Self>;
-                #(#fs)*
-            }
-            pub trait #{format_ident!("{name}Impl")}: #name{
-                #(#fs3)*
-                fn init(&mut self) -> #root::_rexport::anyhow::Result<()> where Self: 'static;
-            }
-            const _: () = {
-                use #root::Memory;
-                impl<C: #name> #{format_ident!("{name}Impl")} for C{
-                    #(#fs2)*
-                    fn init(&mut self) -> #root::_rexport::anyhow::Result<()> where Self: 'static{
-                        let ctx = self;
-                        #(#init);*;
-                        return Ok(())
-                    }
-                }
-                #(#funcs)*
-            };
-            impl<Target: #name + ?Sized> Default for #data<Target>{
-                fn default() -> Self{
-                    Self{
-                        #(#defaults),*
-                    }
+        }
+        pub trait #name: #fp_ts::CtxSpec<ExternRef = Self::_ExternRef> #async_send_sync #(#plugin_bounds)* {
+            type _ExternRef: Clone #(#plugin_exref_bounds)*;
+            fn data(&mut self) -> &mut #data<Self>;
+            #(#fs)*
+        }
+        pub trait #name_impl: #name{
+            #(#fs3)*
+            fn init(&mut self) -> #root::_rexport::anyhow::Result<()> where Self: 'static;
+        }
+        const _: () = {
+            use #root::Memory;
+            impl<C: #name> #name_impl for C{
+                #(#fs2)*
+                fn init(&mut self) -> #root::_rexport::anyhow::Result<()> where Self: 'static{
+                    let ctx = self;
+                    #(#init);*;
+                    return Ok(())
                 }
             }
-            impl<Target: #name + ?Sized> Clone for #data<Target>{
-                fn clone(&self) -> Self{
-                    Self{
-                        #(#clones),*
-                    }
+            #(#funcs)*
+        };
+        impl<Target: #name + ?Sized> Default for #data<Target>{
+            fn default() -> Self{
+                Self{
+                    #(#defaults),*
                 }
             }
-            #{
-                let a = opts.core.plugins.iter().map(|a|a.post(&opts.core)).collect::<anyhow::Result<Vec<_>>>()?;
-                quote!(#(#a)*)
+        }
+        impl<Target: #name + ?Sized> Clone for #data<Target>{
+            fn clone(&self) -> Self{
+                Self{
+                    #(#clones),*
+                }
             }
-        // }
-        // use #internal_path::{#name,#data};
+        }
+        #(#post_plugins)*
     })
 }
 impl<'a> OptsLt<'a, Module<'static>, LegacyPortalWaffleBackend> {

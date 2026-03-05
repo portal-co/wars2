@@ -3,7 +3,6 @@ use std::{
 };
 // use pit_core::{Arg, Interface};
 use proc_macro2::{Span, TokenStream};
-use quasiquote::quasiquote;
 use quote::{format_ident, quote, ToTokens};
 
 use sha3::Digest;
