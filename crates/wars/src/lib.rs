@@ -86,8 +86,11 @@ impl<'a> OptsCore<'a> {
 }
 pub type Opts<B,K> = OptsLt<'static, B, K>;
 #[derive(Clone)]
-pub struct LegacyWaffleBackend;
-impl Backend for LegacyWaffleBackend {}
+pub struct LegacyPortalWaffleBackend;
+impl Backend for LegacyPortalWaffleBackend {}
+#[derive(Clone)]
+pub struct WasmparserBackend;
+impl Backend for WasmparserBackend {}
 // pub(crate) trait ImportCfg {
 //     fn import(&self, module: &str, name: &str) -> TokenStream;
 // }

@@ -24,7 +24,7 @@ pub(crate) fn bindname(a: &str) -> String {
     }
     return v.into_iter().collect();
 }
-impl OptsLt<'_, Module<'static>, LegacyWaffleBackend> {
+impl OptsLt<'_, Module<'static>, LegacyPortalWaffleBackend> {
     pub(crate) fn old_alloc(&self) -> TokenStream {
         quasiquote!(#{self.core.crate_path.clone()}::_rexport::alloc)
     }
@@ -1321,8 +1321,8 @@ impl OptsLt<'_, Module<'static>, LegacyWaffleBackend> {
     }
 }
 
-impl<'a, X: AsRef<[u8]>> OptsLt<'a, X, LegacyWaffleBackend> {
-    pub(crate) fn to_waffle_mod(&self) -> OptsLt<'a, Module<'static>, LegacyWaffleBackend> {
+impl<'a, X: AsRef<[u8]>> OptsLt<'a, X, LegacyPortalWaffleBackend> {
+    pub(crate) fn to_waffle_mod(&self) -> OptsLt<'a, Module<'static>, LegacyPortalWaffleBackend> {
         let opts = self;
         let mut module =
             waffle::Module::from_wasm_bytes(opts.module.as_ref(), &Default::default()).unwrap();
@@ -1343,7 +1343,7 @@ impl<'a, X: AsRef<[u8]>> OptsLt<'a, X, LegacyWaffleBackend> {
 }
 
 pub(crate) fn go(
-    opts: &OptsLt<'_, Module<'static>, LegacyWaffleBackend>,
+    opts: &OptsLt<'_, Module<'static>, LegacyPortalWaffleBackend>,
 ) -> anyhow::Result<proc_macro2::TokenStream> {
     let mut opts = opts.clone();
     let mut ps = vec![];
@@ -1828,7 +1828,7 @@ pub(crate) fn go(
         // use #internal_path::{#name,#data};
     })
 }
-impl<'a> OptsLt<'a, Module<'static>, LegacyWaffleBackend> {
+impl<'a> OptsLt<'a, Module<'static>, LegacyPortalWaffleBackend> {
     pub(crate) fn to_tokens(&self, tokens: &mut TokenStream) {
         match go(self) {
             Ok(a) => a.to_tokens(tokens),
@@ -1838,7 +1838,7 @@ impl<'a> OptsLt<'a, Module<'static>, LegacyWaffleBackend> {
         }
     }
 }
-impl<'a, X: AsRef<[u8]>> ToTokens for OptsLt<'a, X, LegacyWaffleBackend> {
+impl<'a, X: AsRef<[u8]>> ToTokens for OptsLt<'a, X, LegacyPortalWaffleBackend> {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         self.to_waffle_mod().to_tokens(tokens);
     }
