@@ -280,3 +280,15 @@ impl WasmTy for wasmparser::ValType {
     #[inline] fn is_v128(self) -> bool { matches!(self, wasmparser::ValType::V128) }
     #[inline] fn is_ref(self) -> bool { matches!(self, wasmparser::ValType::Ref(_)) }
 }
+
+// ── WasmTy impl for waffle::Type ─────────────────────────────────────────────
+
+#[cfg(feature = "waffle")]
+impl WasmTy for waffle::Type {
+    #[inline] fn is_i32(self) -> bool { matches!(self, waffle::Type::I32) }
+    #[inline] fn is_i64(self) -> bool { matches!(self, waffle::Type::I64) }
+    #[inline] fn is_f32(self) -> bool { matches!(self, waffle::Type::F32) }
+    #[inline] fn is_f64(self) -> bool { matches!(self, waffle::Type::F64) }
+    #[inline] fn is_v128(self) -> bool { matches!(self, waffle::Type::V128) }
+    #[inline] fn is_ref(self) -> bool { matches!(self, waffle::Type::Heap(_)) }
+}

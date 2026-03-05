@@ -13,34 +13,15 @@ pub(crate) fn mangle_value(a: Value, b: usize) -> Ident {
         format_ident!("{a}p{}", b - 1)
     }
 }
-pub(crate) fn bindname(a: &str) -> String {
-    let mut v = vec![];
-    for k in a.chars() {
-        if k.is_alphanumeric() {
-            v.push(k)
-        } else {
-            v.extend(format!("_{}_", k as u32).chars());
-        }
-    }
-    return v.into_iter().collect();
-}
+pub(crate) use crate::shared::bindname;
 
 type Opts<'a> = OptsLt<'a, Module<'static>, LegacyPortalWaffleBackend>;
 
 pub(crate) fn alloc(opts: &Opts<'_>) -> TokenStream {
-    quasiquote!(#{opts.core.crate_path.clone()}::_rexport::alloc)
+    crate::shared::alloc(&opts.core)
 }
 pub(crate) fn fp(opts: &Opts<'_>) -> TokenStream {
-    let root = opts.core.crate_path.clone();
-    if opts.core.flags.contains(Flags::ASYNC) {
-        quote! {
-            #root::func::unsync
-        }
-    } else {
-        quote! {
-            #root::func
-        }
-    }
+    crate::shared::fp(&opts.core)
 }
 pub(crate) fn host_tpit(opts: &Opts<'_>) -> TokenStream {
     match opts.core.roots.get("tpit_rt") {
@@ -223,114 +204,110 @@ pub(crate) fn import(
     });
 }
 pub(crate) fn render_ty(opts: &Opts<'_>, ctx: &TokenStream, ty: Type) -> TokenStream {
-    if opts.core.flags.contains(Flags::NEW_ABI) {
-        panic!("old backend only supports old abi")
-    }
-    let root = opts.core.crate_path.clone();
-    match ty {
-        Type::I32 => quote! {u32},
-        Type::I64 => quote! {u64},
-        Type::F32 => quote! {f32},
-        Type::F64 => quote! {f64},
-        Type::V128 => quote! {u128},
-        Type::Heap(WithNullable {
-            nullable,
-            value: HeapType::Sig { sig_index },
-        }) if matches!(
-            &opts.module.signatures[sig_index],
-            SignatureData::Func { .. }
-        ) =>
+    // Handle the typed-funcref case that needs module-level signature lookup —
+    // the generic shared::render_ty can't do this because it has no module access.
+    if let Type::Heap(WithNullable {
+        nullable,
+        value: HeapType::Sig { sig_index },
+    }) = ty
+    {
+        if let SignatureData::Func { params, returns, .. } =
+            &opts.module.signatures[sig_index]
         {
-            let data = &opts.module.signatures[sig_index];
-            let SignatureData::Func {
-                params, returns, ..
-            } = data
-            else {
-                unreachable!()
-            };
+            let root = opts.core.crate_path.clone();
             let params = params.iter().map(|x| render_ty(opts, ctx, *x));
             let returns = returns.iter().map(|x| render_ty(opts, ctx, *x));
             let mut x = if opts.core.flags.contains(Flags::ASYNC) {
                 quote! {
-                    #root::func::unsync::Df<#root::_rexport::tuple_list::tuple_list_type!(#(#params),*),#root::_rexport::tuple_list::tuple_list_type!(#(#returns),*),#ctx>
+                    #root::func::unsync::Df<
+                        #root::_rexport::tuple_list::tuple_list_type!(#(#params),*),
+                        #root::_rexport::tuple_list::tuple_list_type!(#(#returns),*),
+                        #ctx>
                 }
             } else {
                 quote! {
-                    #root::func::Df<#root::_rexport::tuple_list::tuple_list_type!(#(#params),*),#root::_rexport::tuple_list::tuple_list_type!(#(#returns),*),#ctx>
+                    #root::func::Df<
+                        #root::_rexport::tuple_list::tuple_list_type!(#(#params),*),
+                        #root::_rexport::tuple_list::tuple_list_type!(#(#returns),*),
+                        #ctx>
                 }
             };
             if nullable {
-                x = quote! {
-                    Option<#x>
-                }
+                x = quote! { Option<#x> };
             }
-            x
+            return x;
         }
-        _ => quasiquote! {#{fp(opts)}::Value<#ctx>},
+    }
+    // Everything else goes through the generic shared helper.
+    crate::shared::render_ty(&opts.core, ctx, ty)
+}
+
+/// Convert a `&SignatureData` into a `FuncSig<'_, Type>` for use with
+/// the generic `shared::` helpers.
+fn sig_to_funcsig(data: &SignatureData) -> crate::shared::FuncSig<'_, Type> {
+    match data {
+        SignatureData::Func { params, returns, .. } => crate::shared::FuncSig {
+            params,
+            returns,
+        },
+        _ => crate::shared::FuncSig { params: &[], returns: &[] },
     }
 }
+
 pub(crate) fn render_generics(
     opts: &Opts<'_>,
     ctx: &TokenStream,
     data: &SignatureData,
 ) -> TokenStream {
-    if opts.core.flags.contains(Flags::NEW_ABI) {
-        panic!("old backend only supports old abi")
-    }
+    // render_generics uses render_ty internally; we must pass our local
+    // render_ty (which resolves typed funcrefs) rather than shared's.
+    // So we inline the expansion here rather than calling shared::render_generics.
+    let sig = sig_to_funcsig(data);
     let root = opts.core.crate_path.clone();
-    let SignatureData::Func {
-        params, returns, ..
-    } = data
-    else {
-        todo!()
-    };
-    let params2 = params.iter().map(|x| render_ty(opts, ctx, *x));
-    let param_ids = params
-        .iter()
-        .enumerate()
-        .map(|(a, _)| format_ident!("p{a}"));
-    let returns = returns.iter().map(|x| render_ty(opts, ctx, *x));
+    let params = sig.params.iter().map(|x| render_ty(opts, ctx, *x));
+    let returns = sig.returns.iter().map(|x| render_ty(opts, ctx, *x));
     quote! {
-        #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*),#root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)
+        #root::_rexport::tuple_list::tuple_list_type!(#(#params),*),
+        #root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)
     }
 }
+
 pub(crate) fn render_fn_sig(opts: &Opts<'_>, name: Ident, data: &SignatureData) -> TokenStream {
-    if opts.core.flags.contains(Flags::NEW_ABI) {
-        panic!("old backend only supports old abi")
-    }
+    // render_fn_sig uses render_ty internally; inline for the same reason as render_generics.
+    let sig = sig_to_funcsig(data);
     let root = opts.core.crate_path.clone();
     let base = opts.core.name.clone();
-    let ctx = quote! {C};
-    // let data = &self.module.signatures[sig_index];
-    let SignatureData::Func {
-        params, returns, ..
-    } = data
-    else {
-        todo!()
-    };
-    let params2 = params.iter().map(|x| render_ty(opts, &ctx, *x));
-    let param_ids = params
-        .iter()
-        .enumerate()
-        .map(|(a, _)| format_ident!("p{a}"));
-    let returns = returns.iter().map(|x| render_ty(opts, &ctx, *x));
+    let ctx = quote! { C };
+    let params2: Vec<_> = sig.params.iter().map(|x| render_ty(opts, &ctx, *x)).collect();
+    let param_ids: Vec<_> = sig.params.iter().enumerate().map(|(a, _)| format_ident!("p{a}")).collect();
+    let returns: Vec<_> = sig.returns.iter().map(|x| render_ty(opts, &ctx, *x)).collect();
     let mut x = if opts.core.flags.contains(Flags::ASYNC) {
         quote! {
-            fn #name<'a,C: #base + 'static>(ctx: &'a mut C, #root::_rexport::tuple_list::tuple_list!(#(#param_ids),*): #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)) -> impl #root::func::unsync::UnwrappedAsyncRec<'a,#root::_rexport::anyhow::Result<#root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)>>
+            fn #name<'a, C: #base + 'static>(
+                ctx: &'a mut C,
+                #root::_rexport::tuple_list::tuple_list!(#(#param_ids),*):
+                    #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)
+            ) -> impl #root::func::unsync::UnwrappedAsyncRec<'a,
+                    #root::_rexport::anyhow::Result<
+                        #root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)>>
         }
     } else {
         quote! {
-            fn #name<'a,C: #base + 'static>(ctx: &'a mut C, #root::_rexport::tuple_list::tuple_list!(#(#param_ids),*): #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)) -> #root::_rexport::tramp::BorrowRec<'a,#root::_rexport::anyhow::Result<#root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)>>
+            fn #name<'a, C: #base + 'static>(
+                ctx: &'a mut C,
+                #root::_rexport::tuple_list::tuple_list!(#(#param_ids),*):
+                    #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)
+            ) -> #root::_rexport::tramp::BorrowRec<'a,
+                    #root::_rexport::anyhow::Result<
+                        #root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)>>
         }
     };
     if let Some(t) = opts.core.roots.get("tracing") {
-        x = quote! {
-            #[#t::instrument]
-            #x
-        };
+        x = quote! { #[#t::instrument] #x };
     }
-    return x;
+    x
 }
+
 pub(crate) fn fname(opts: &Opts<'_>, a: Func) -> Ident {
     format_ident!("{a}_{}", bindname(opts.module.funcs[a].name()))
 }
@@ -369,36 +346,40 @@ pub(crate) fn render_export(
     wrapped: Ident,
     data: &SignatureData,
 ) -> TokenStream {
-    if opts.core.flags.contains(Flags::NEW_ABI) {
-        panic!("old backend only supports old abi")
-    }
-    let SignatureData::Func {
-        params, returns, ..
-    } = data
-    else {
-        todo!()
-    };
+    let sig = sig_to_funcsig(data);
     let root = opts.core.crate_path.clone();
-    let base = opts.core.name.clone();
-    let ctx = quote! {Self};
-    // let data = &self.module.signatures[sig_index];
-    let params2 = params.iter().map(|x| render_ty(opts, &ctx, *x));
-    let param_ids = params
-        .iter()
-        .enumerate()
+    let ctx = quote! { Self };
+    let params2: Vec<_> = sig.params.iter().map(|x| render_ty(opts, &ctx, *x)).collect();
+    let param_ids: Vec<_> = sig.params.iter().enumerate()
         .map(|(a, _)| format_ident!("p{a}"))
         .collect::<Vec<_>>();
-    let returns = returns.iter().map(|x| render_ty(opts, &ctx, *x));
+    let returns: Vec<_> = sig.returns.iter().map(|x| render_ty(opts, &ctx, *x)).collect();
     if opts.core.flags.contains(Flags::ASYNC) {
         quote! {
-            fn #name<'a>(self: &'a mut Self, #root::_rexport::tuple_list::tuple_list!(#(#param_ids),*): #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)) -> #root::func::unsync::AsyncRec<'a,#root::_rexport::anyhow::Result<#root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)>> where Self: 'static{
-                return #root::func::unsync::AsyncRec::wrap(#wrapped(self,#root::_rexport::tuple_list::tuple_list!(#(#param_ids),*)));
+            fn #name<'a>(
+                self: &'a mut Self,
+                #root::_rexport::tuple_list::tuple_list!(#(#param_ids),*):
+                    #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)
+            ) -> #root::func::unsync::AsyncRec<'a,
+                    #root::_rexport::anyhow::Result<
+                        #root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)>>
+            where Self: 'static {
+                return #root::func::unsync::AsyncRec::wrap(
+                    #wrapped(self, #root::_rexport::tuple_list::tuple_list!(#(#param_ids),*))
+                );
             }
         }
     } else {
         quote! {
-            fn #name<'a>(self: &'a mut Self, #root::_rexport::tuple_list::tuple_list!(#(#param_ids),*): #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)) -> #root::_rexport::tramp::BorrowRec<'a,#root::_rexport::anyhow::Result<#root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)>> where Self: 'static{
-                return #wrapped(self,#root::_rexport::tuple_list::tuple_list!(#(#param_ids),*));
+            fn #name<'a>(
+                self: &'a mut Self,
+                #root::_rexport::tuple_list::tuple_list!(#(#param_ids),*):
+                    #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)
+            ) -> #root::_rexport::tramp::BorrowRec<'a,
+                    #root::_rexport::anyhow::Result<
+                        #root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)>>
+            where Self: 'static {
+                return #wrapped(self, #root::_rexport::tuple_list::tuple_list!(#(#param_ids),*));
             }
         }
     }
@@ -408,33 +389,30 @@ pub(crate) fn render_self_sig_import(
     name: Ident,
     data: &SignatureData,
 ) -> TokenStream {
-    if opts.core.flags.contains(Flags::NEW_ABI) {
-        panic!("old backend only supports old abi")
-    }
-    let SignatureData::Func {
-        params, returns, ..
-    } = data
-    else {
-        todo!()
-    };
+    let sig = sig_to_funcsig(data);
     let root = opts.core.crate_path.clone();
-    let base = opts.core.name.clone();
-    let ctx = quote! {Self};
-    // let data = &self.module.signatures[sig_index];
-    let params2 = params.iter().map(|x| render_ty(opts, &ctx, *x));
-    let param_ids = params
-        .iter()
-        .enumerate()
-        .map(|(a, _)| format_ident!("p{a}"))
-        .collect::<Vec<_>>();
-    let returns = returns.iter().map(|x| render_ty(opts, &ctx, *x));
+    let ctx = quote! { Self };
+    let params2: Vec<_> = sig.params.iter().map(|x| render_ty(opts, &ctx, *x)).collect();
+    let returns: Vec<_> = sig.returns.iter().map(|x| render_ty(opts, &ctx, *x)).collect();
     if opts.core.flags.contains(Flags::ASYNC) {
         quote! {
-            fn #name<'a>(self: &'a mut Self, imp: #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)) -> #root::func::unsync::AsyncRec<'a,#root::_rexport::anyhow::Result<#root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)>> where Self: 'static;
+            fn #name<'a>(
+                self: &'a mut Self,
+                imp: #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)
+            ) -> #root::func::unsync::AsyncRec<'a,
+                    #root::_rexport::anyhow::Result<
+                        #root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)>>
+            where Self: 'static;
         }
     } else {
         quote! {
-            fn #name<'a>(self: &'a mut Self, imp: #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)) -> #root::_rexport::tramp::BorrowRec<'a,#root::_rexport::anyhow::Result<#root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)>> where Self: 'static;
+            fn #name<'a>(
+                self: &'a mut Self,
+                imp: #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)
+            ) -> #root::_rexport::tramp::BorrowRec<'a,
+                    #root::_rexport::anyhow::Result<
+                        #root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)>>
+            where Self: 'static;
         }
     }
 }
