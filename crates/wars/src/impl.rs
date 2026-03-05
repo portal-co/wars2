@@ -24,17 +24,11 @@ pub(crate) fn bindname(a: &str) -> String {
     }
     return v.into_iter().collect();
 }
-impl OptsLt<'_, Module<'static>> {
+impl OptsLt<'_, Module<'static>, LegacyWaffleBackend> {
     pub(crate) fn old_alloc(&self) -> TokenStream {
-        if self.core.flags.contains(Flags::NEW_BACKEND) {
-            panic!("new backend used on old backend");
-        }
         quasiquote!(#{self.core.crate_path.clone()}::_rexport::alloc)
     }
     pub(crate) fn old_fp(&self) -> TokenStream {
-        if self.core.flags.contains(Flags::NEW_BACKEND) {
-            panic!("new backend used on old backend");
-        }
         let root = self.core.crate_path.clone();
         if self.core.flags.contains(Flags::ASYNC) {
             quote! {
@@ -47,9 +41,6 @@ impl OptsLt<'_, Module<'static>> {
         }
     }
     pub(crate) fn old_host_tpit(&self) -> TokenStream {
-        if self.core.flags.contains(Flags::NEW_BACKEND) {
-            panic!("new backend used on old backend");
-        }
         match self.core.roots.get("tpit_rt") {
             None => quote! {
                 ::core::convert::Infallible
@@ -60,9 +51,6 @@ impl OptsLt<'_, Module<'static>> {
         }
     }
     pub(crate) fn old_mem(&self, m: Memory) -> anyhow::Result<TokenStream> {
-        if self.core.flags.contains(Flags::NEW_BACKEND) {
-            panic!("new backend used on old backend");
-        }
         if let Some(i) = self
             .module
             .imports
@@ -103,9 +91,6 @@ impl OptsLt<'_, Module<'static>> {
         name: &str,
         mut params: impl Iterator<Item = TokenStream>,
     ) -> anyhow::Result<TokenStream> {
-        if self.core.flags.contains(Flags::NEW_BACKEND) {
-            panic!("new backend used on old backend");
-        }
         let params = params.collect::<Vec<_>>();
         for pl in self.core.plugins.iter() {
             if let Some(a) = pl.import(&self.core, module, name, params.clone())? {
@@ -236,9 +221,6 @@ impl OptsLt<'_, Module<'static>> {
         });
     }
     pub(crate) fn old_render_ty(&self, ctx: &TokenStream, ty: Type) -> TokenStream {
-        if self.core.flags.contains(Flags::NEW_BACKEND) {
-            panic!("new backend used on old backend");
-        }
         if self.core.flags.contains(Flags::NEW_ABI) {
             panic!("old backend only supports old abi")
         }
@@ -290,9 +272,6 @@ impl OptsLt<'_, Module<'static>> {
         ctx: &TokenStream,
         data: &SignatureData,
     ) -> TokenStream {
-        if self.core.flags.contains(Flags::NEW_BACKEND) {
-            panic!("new backend used on old backend");
-        }
         if self.core.flags.contains(Flags::NEW_ABI) {
             panic!("old backend only supports old abi")
         }
@@ -314,9 +293,6 @@ impl OptsLt<'_, Module<'static>> {
         }
     }
     pub(crate) fn old_render_fn_sig(&self, name: Ident, data: &SignatureData) -> TokenStream {
-        if self.core.flags.contains(Flags::NEW_BACKEND) {
-            panic!("new backend used on old backend");
-        }
         if self.core.flags.contains(Flags::NEW_ABI) {
             panic!("old backend only supports old abi")
         }
@@ -354,15 +330,9 @@ impl OptsLt<'_, Module<'static>> {
         return x;
     }
     pub(crate) fn old_fname(&self, a: Func) -> Ident {
-        if self.core.flags.contains(Flags::NEW_BACKEND) {
-            panic!("new backend used on old backend");
-        }
         format_ident!("{a}_{}", bindname(self.module.funcs[a].name()))
     }
     pub(crate) fn old_render_fun_ref(&self, ctx: &TokenStream, x: Func) -> TokenStream {
-        if self.core.flags.contains(Flags::NEW_BACKEND) {
-            panic!("new backend used on old backend");
-        }
         let root = self.core.crate_path.clone();
         if x.is_invalid() {
             return quasiquote! {
@@ -397,9 +367,6 @@ impl OptsLt<'_, Module<'static>> {
         wrapped: Ident,
         data: &SignatureData,
     ) -> TokenStream {
-        if self.core.flags.contains(Flags::NEW_BACKEND) {
-            panic!("new backend used on old backend");
-        }
         if self.core.flags.contains(Flags::NEW_ABI) {
             panic!("old backend only supports old abi")
         }
@@ -439,9 +406,6 @@ impl OptsLt<'_, Module<'static>> {
         name: Ident,
         data: &SignatureData,
     ) -> TokenStream {
-        if self.core.flags.contains(Flags::NEW_BACKEND) {
-            panic!("new backend used on old backend");
-        }
         if self.core.flags.contains(Flags::NEW_ABI) {
             panic!("old backend only supports old abi")
         }
@@ -478,9 +442,6 @@ impl OptsLt<'_, Module<'static>> {
         b: &FunctionBody,
         stmts: Block,
     ) -> anyhow::Result<Vec<TokenStream>> {
-        if self.core.flags.contains(Flags::NEW_BACKEND) {
-            panic!("new backend used on old backend");
-        }
         let root = self.core.crate_path.clone();
         let fp = self.old_fp();
         let stmts = b.blocks[stmts].params.iter().map(|a|a.1).chain(b.blocks[stmts].insts.iter().filter_map(|a|a.pure_core())).map(|a|{
@@ -886,9 +847,6 @@ impl OptsLt<'_, Module<'static>> {
         k: Block,
         render_target: &impl Fn(&BlockTarget) -> TokenStream,
     ) -> anyhow::Result<TokenStream> {
-        if self.core.flags.contains(Flags::NEW_BACKEND) {
-            panic!("new backend used on old backend");
-        }
         let root = self.core.crate_path.clone();
         Ok(match &b.blocks[k].terminator.terminator {
             waffle::Terminator::Br { target } => render_target(target),
@@ -1058,9 +1016,6 @@ impl OptsLt<'_, Module<'static>> {
         f: Func,
         x: &ShapedBlock<Block>,
     ) -> anyhow::Result<TokenStream> {
-        if self.core.flags.contains(Flags::NEW_BACKEND) {
-            panic!("new backend used on old backend");
-        }
         let root = self.core.crate_path.clone();
         let b = self.module.funcs[f].body().unwrap();
         Ok(match x {
@@ -1233,9 +1188,6 @@ impl OptsLt<'_, Module<'static>> {
         })
     }
     pub(crate) fn old_render_fn(&self, f: Func) -> anyhow::Result<TokenStream> {
-        if self.core.flags.contains(Flags::NEW_BACKEND) {
-            panic!("new backend used on old backend");
-        }
         let name = self.old_fname(f);
         let sig = self.old_render_fn_sig(
             name.clone(),
@@ -1369,8 +1321,8 @@ impl OptsLt<'_, Module<'static>> {
     }
 }
 
-impl<'a, X: AsRef<[u8]>> OptsLt<'a, X> {
-    pub(crate) fn to_mod(&self) -> OptsLt<'a, Module<'static>> {
+impl<'a, X: AsRef<[u8]>> OptsLt<'a, X, LegacyWaffleBackend> {
+    pub(crate) fn to_waffle_mod(&self) -> OptsLt<'a, Module<'static>, LegacyWaffleBackend> {
         let opts = self;
         let mut module =
             waffle::Module::from_wasm_bytes(opts.module.as_ref(), &Default::default()).unwrap();
@@ -1382,6 +1334,7 @@ impl<'a, X: AsRef<[u8]>> OptsLt<'a, X> {
         let opts = OptsLt {
             // crate_path: opts.crate_path.clone(),
             module,
+            backend: self.backend.clone(),
             core: self.core.clone(), // tpit: opts.tpit.clone(),
                                      // cfg: opts.cfg.clone(),
         };
@@ -1389,7 +1342,9 @@ impl<'a, X: AsRef<[u8]>> OptsLt<'a, X> {
     }
 }
 
-pub(crate) fn go(opts: &OptsLt<'_, Module<'static>>) -> anyhow::Result<proc_macro2::TokenStream> {
+pub(crate) fn go(
+    opts: &OptsLt<'_, Module<'static>, LegacyWaffleBackend>,
+) -> anyhow::Result<proc_macro2::TokenStream> {
     let mut opts = opts.clone();
     let mut ps = vec![];
     while let Some(p) = opts.core.plugins.pop() {
@@ -1873,7 +1828,7 @@ pub(crate) fn go(opts: &OptsLt<'_, Module<'static>>) -> anyhow::Result<proc_macr
         // use #internal_path::{#name,#data};
     })
 }
-impl<'a> OptsLt<'a, Module<'static>> {
+impl<'a> OptsLt<'a, Module<'static>, LegacyWaffleBackend> {
     pub(crate) fn to_tokens(&self, tokens: &mut TokenStream) {
         match go(self) {
             Ok(a) => a.to_tokens(tokens),
@@ -1883,8 +1838,8 @@ impl<'a> OptsLt<'a, Module<'static>> {
         }
     }
 }
-impl<'a, X: AsRef<[u8]>> ToTokens for OptsLt<'a, X> {
+impl<'a, X: AsRef<[u8]>> ToTokens for OptsLt<'a, X, LegacyWaffleBackend> {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        self.to_mod().to_tokens(tokens);
+        self.to_waffle_mod().to_tokens(tokens);
     }
 }

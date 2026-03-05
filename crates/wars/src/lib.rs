@@ -1,10 +1,5 @@
 use std::{
-    borrow::Cow,
-    collections::{BTreeMap, BTreeSet},
-    convert::Infallible,
-    f32::consts::E,
-    iter::once,
-    sync::{Arc, OnceLock},
+    borrow::Cow, collections::{BTreeMap, BTreeSet}, convert::Infallible, f32::consts::E, iter::once, marker::PhantomData, sync::{Arc, OnceLock}
 };
 // use pit_core::{Arg, Interface};
 use proc_macro2::{Span, TokenStream};
@@ -55,16 +50,18 @@ bitflags::bitflags! {
         // const PIT = 0x20;
         // const UNSANDBOXED = 0x2;
         const NEW_ABI = 0x100;
-        const NEW_BACKEND = 0x200;
     }
 }
 pub(crate) mod unswitch;
 // pub(crate) mod wasix;
+pub trait Backend{
 
+}
 #[derive(Clone)]
-pub struct OptsLt<'a, B> {
+pub struct OptsLt<'a, B,K: Backend> {
     pub module: B,
     pub core: OptsCore<'a>,
+    pub backend: PhantomData<K>,
     // pub(crate) cfg: Arc<dyn ImportCfg>,
 }
 #[derive(Clone)]
@@ -79,14 +76,18 @@ pub struct OptsCore<'a> {
     pub plugins: Vec<Arc<dyn Plugin + 'a>>,
 }
 impl<'a> OptsCore<'a> {
-    pub fn inflate(self) -> OptsLt<'a, &'a [u8]> {
+    pub fn inflate<K: Backend>(self) -> OptsLt<'a, &'a [u8], K> {
         OptsLt {
             module: self.bytes,
             core: self,
+            backend: PhantomData,
         }
     }
 }
-pub type Opts<B> = OptsLt<'static, B>;
+pub type Opts<B,K> = OptsLt<'static, B, K>;
+#[derive(Clone)]
+pub struct LegacyWaffleBackend;
+impl Backend for LegacyWaffleBackend {}
 // pub(crate) trait ImportCfg {
 //     fn import(&self, module: &str, name: &str) -> TokenStream;
 // }
