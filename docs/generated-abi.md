@@ -1,9 +1,13 @@
-# Generated ABI/API Reference
+# Generated ABI/API Reference — ABI v0
 
-The `wars` compiler (with the `waffle` feature) compiles a WebAssembly binary into a Rust
-module.  This document describes every piece of Rust code that the compiler emits so you
-know exactly what to implement, what to call, and what to expect at the boundary between
-the generated code and your host program.
+This document describes **ABI v0**, the Rust code shape emitted by all `wars`
+compiler backends.  Currently the `LegacyPortalWaffleBackend` (enabled with the
+`waffle` Cargo feature) is the only shipping backend, but the new backend will
+target the same ABI so everything here applies to both.
+
+The document covers every piece of Rust code the compiler emits so you know
+exactly what to implement, what to call, and what to expect at the boundary
+between generated code and your host program.
 
 ---
 
@@ -13,8 +17,8 @@ For a call like
 
 ```rust
 wars::OptsCore { name: format_ident!("Greeter"), … }
-    .inflate::<LegacyPortalWaffleBackend>()
-    .to_waffle_mod()
+    .inflate::<SomeV0Backend>()
+    // backend-specific compilation step
 ```
 
 the compiler emits roughly:
@@ -80,7 +84,7 @@ pub trait Foo: wars_rt::func::CtxSpec<ExternRef = Self::_ExternRef>
     fn data(&mut self) -> &mut FooData<Self>;
 
     // ── Tables ──────────────────────────────────────────────────────────────
-    // One method per wasm table, named after the waffle entity index (table0,
+    // One method per wasm table, named after the entity index (table0,
     // table1, …).  Returns a mutable reference to the Vec that backs the table.
     fn table0(&mut self) -> &mut alloc::vec::Vec<wars_rt::func::Value<Self>>;
 
@@ -229,7 +233,7 @@ fn func42_my_internal_name<'a, C: Foo + 'static>(
 ) -> tramp::BorrowRec<'a, anyhow::Result<tuple_list_type!(u32)>>
 ```
 
-The function name is `<waffle-entity-index>_<wasm-name>`, where the wasm name
+The function name is `<entity-index>_<wasm-name>`, where the wasm name
 is passed through `bindname`.  These functions are not part of any public API;
 they are used internally and by the blanket `FooImpl` impl.
 
