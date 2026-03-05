@@ -24,1301 +24,1258 @@ pub(crate) fn bindname(a: &str) -> String {
     }
     return v.into_iter().collect();
 }
-impl OptsLt<'_, Module<'static>, LegacyPortalWaffleBackend> {
-    pub(crate) fn old_alloc(&self) -> TokenStream {
-        quasiquote!(#{self.core.crate_path.clone()}::_rexport::alloc)
-    }
-    pub(crate) fn old_fp(&self) -> TokenStream {
-        let root = self.core.crate_path.clone();
-        if self.core.flags.contains(Flags::ASYNC) {
-            quote! {
-                #root::func::unsync
-            }
-        } else {
-            quote! {
-                #root::func
-            }
+
+type Opts<'a> = OptsLt<'a, Module<'static>, LegacyPortalWaffleBackend>;
+
+pub(crate) fn alloc(opts: &Opts<'_>) -> TokenStream {
+    quasiquote!(#{opts.core.crate_path.clone()}::_rexport::alloc)
+}
+pub(crate) fn fp(opts: &Opts<'_>) -> TokenStream {
+    let root = opts.core.crate_path.clone();
+    if opts.core.flags.contains(Flags::ASYNC) {
+        quote! {
+            #root::func::unsync
+        }
+    } else {
+        quote! {
+            #root::func
         }
     }
-    pub(crate) fn old_host_tpit(&self) -> TokenStream {
-        match self.core.roots.get("tpit_rt") {
-            None => quote! {
-                ::core::convert::Infallible
-            },
-            Some(r) => quote! {
-                #r::Tpit<()>
-            },
-        }
+}
+pub(crate) fn host_tpit(opts: &Opts<'_>) -> TokenStream {
+    match opts.core.roots.get("tpit_rt") {
+        None => quote! {
+            ::core::convert::Infallible
+        },
+        Some(r) => quote! {
+            #r::Tpit<()>
+        },
     }
-    pub(crate) fn old_mem(&self, m: Memory) -> anyhow::Result<TokenStream> {
-        if let Some(i) = self
-            .module
-            .imports
-            .iter()
-            .find(|x| x.kind == ImportKind::Memory(m))
-        {
-            // if i.module == "!!unsafe" && i.name == "host" && self.flags.contains(Flags::HOST_MEMORY)
-            // {
-            //     return quote! {
-            //         unsafe{
-            //             ::std::slice::from_raw_parts_mut(::std::ptr::null(),usize::MAX)
-            //         }
-            //     };
-            // }
-            for p in self.core.plugins.iter() {
-                if let Some(i) = p.mem_import(&self.core, &i.module, &i.name)? {
-                    return Ok(quasiquote!(#{i.expr}));
-                }
-            }
-            // if self.flags.contains(Flags::WASIX) {
-            //     if i.module == "wasi_snapshot_preview1" || i.module == "wasix_32v1" {
-            //         if i.name == "memory" {
-            //             return quote! {
-            //                 ctx.wasix_memory()
-            //             };
-            //         }
-            //     }
-            // }
-        }
-        let m2 = format_ident!("{m}");
-        Ok(quote! {
-            ctx.#m2()
-        })
-    }
-    pub(crate) fn old_import(
-        &self,
-        module: &str,
-        name: &str,
-        mut params: impl Iterator<Item = TokenStream>,
-    ) -> anyhow::Result<TokenStream> {
-        let params = params.collect::<Vec<_>>();
-        for pl in self.core.plugins.iter() {
-            if let Some(a) = pl.import(&self.core, module, name, params.clone())? {
-                return Ok(a);
-            }
-        }
-        let mut params = params.into_iter();
-        let root = self.core.crate_path.clone();
-        // if self.flags.contains(Flags::UNSANDBOXED) {
-        // if self.flags.contains(Flags::HOST_MEMORY) {
-        //     if let Some(a) = module.strip_prefix("!!unsafe/"){
-        //         if a == "linux"{
-        //             if let Some(s) = name.strip_prefix("syscall"){
-        //                 if let Some((s,_)) = s.split_once("/"){
-        //                     if let Some(l) = self.roots.get("linux-syscall"){
-        //                         return quasiquote! {
-        //                             #{self.old_fp()}::ret(match #l::syscall!(#l::#{format_ident!("SYS_{s}")}, #(#params),*).try_usize(){
-        //                                 Ok(a) => Ok(a as u64),
-        //                                 Err(e) => Err(e.into())
-        //                             })
-        //                         };
-        //                     }
-        //                 }
-        //             }
+}
+pub(crate) fn mem(opts: &Opts<'_>, m: Memory) -> anyhow::Result<TokenStream> {
+    if let Some(i) = opts
+        .module
+        .imports
+        .iter()
+        .find(|x| x.kind == ImportKind::Memory(m))
+    {
+        // if i.module == "!!unsafe" && i.name == "host" && self.flags.contains(Flags::HOST_MEMORY)
+        // {
+        //     return quote! {
+        //         unsafe{
+        //             ::std::slice::from_raw_parts_mut(::std::ptr::null(),usize::MAX)
         //         }
-        //     }
+        //     };
         // }
+        for p in opts.core.plugins.iter() {
+            if let Some(i) = p.mem_import(&opts.core, &i.module, &i.name)? {
+                return Ok(quasiquote!(#{i.expr}));
+            }
+        }
         // if self.flags.contains(Flags::WASIX) {
-        //     if module == "wasi_snapshot_preview1" || module == "wasix_32v1" {
-        //         return quasiquote! {
-        //             #root::wasix::#{format_ident!("{name}")}(#(#params),*)
-        //         };
-        //     }
-        // }
-        // if self.flags.contains(Flags::BIND) {
-        //     if module == "wars/bind" {
-        //         if name == "!!drop" {
-        //             return quasiquote! {
-        //                 {
-        //                     let v = self.data().rust_table.remove(#(#params),*).unwrap();
-        //                     Ok(())
-        //                 }
+        //     if i.module == "wasi_snapshot_preview1" || i.module == "wasix_32v1" {
+        //         if i.name == "memory" {
+        //             return quote! {
+        //                 ctx.wasix_memory()
         //             };
         //         }
-        //         let params = params.collect::<Vec<_>>();
-        //         return quasiquote! {
-        //             {
-        //                 let v = #{syn::parse_str::<TokenStream>(&name).unwrap()}(#(unsafe{#root::get_cell(self.data().rust_table.get(&#params)).unwrap()}),*)#{if self.flags.contains(Flags::ASYNC){
-        //                     quote!{.await}
-        //                 }else{
-        //                     quote!{}
-        //                 }};
-        //                 v.map(|x|(alloc(&mut self.data().rust_table,#root::any_cell(x)),()))
-        //             }
-        //         };
         //     }
         // }
-        //     if a == "fs" {
-        //         match name {
-        //             "open" => {
-        //                 let p0 = params.next().unwrap();
-        //                 let l = params.next().unwrap();
-        //                 return quote! {
-        //                     #root::_rexport::tramp::BorrowRec::Ret({
-        //                         let f = #p0;
-        //                         let l = #l;
-        //                         let f = ::std::str::from_utf8(&ctx.memory()[(f as usize)..][..(l as usize)]);
-        //                         let f = match f{
-        //                             Ok(a) => a,
-        //                             Err(e) => return #root::_rexport::tramp::BorrowRec::Ret(Er(e.into()));
-        //                         };
-        //                         let f = ::std::fs::open(f);
-        //                         let f = match f{
-        //                             Ok(a) =>  alloc(&mut ctx.data().files,::std::sync::Arc::new(a)) * 2,
-        //                             Err(e) => alloc(&mut ctx.data().io_errors,::std::sync::Arc::new(e)) * 2 + 1;
-        //                         };
-        //                         f
-        //                     })
-        //                 };
-        //             }
-        //             "read" => {
-        //                 let fd = params.next().unwrap();
-        //                 let p0 = params.next().unwrap();
-        //                 let l = params.next().unwrap();
-        //                 return quote! {
-        //                     {
-        //                         let f = #p0;
-        //                         let l = #l;
-        //                         let fd = #fd;
-        //                         let fd = ctx.data().files.get(&fd).unwrap().clone();
-        //                         let f = &mut ctx.memory()[(f as usize)..][..(l as usize)];
-        //                         let f = ::std::io::Read::read(&mut fd.as_ref(),f);
-        //                         match f{
-        //                             Ok(a) =>                               #root::_rexport::tuple_list::tuple_list!(a as u64 * 2),
-        //                             Err(e) => #root::_rexport::tuple_list::tuple_list!(alloc(&mut ctx.data().io_errors,::std::sync::Arc::new(e)) as u64 * 2 + 1);
-        //                         }
-        //                     }
-        //                 };
-        //             }
-        //             "write" => {
-        //                 let fd = params.next().unwrap();
-        //                 let p0 = params.next().unwrap();
-        //                 let l = params.next().unwrap();
-        //                 return quote! {
-        //                     {
-        //                         let f = #p0;
-        //                         let l = #l;
-        //                         let fd = #fd;
-        //                         let fd = ctx.data().files.get(&fd).unwrap().clone();
-        //                         let f = &ctx.memory()[(f as usize)..][..(l as usize)];
-        //                         let f = ::std::io::Write::write(&mut fd.as_ref(),f);
-        //                         match f{
-        //                             Ok(a) =>                               #root::_rexport::tuple_list::tuple_list!(a as u64 * 2),
-        //                             Err(e) => #root::_rexport::tuple_list::tuple_list!(alloc(&mut ctx.data().io_errors,::std::sync::Arc::new(e)) as u64 * 2 + 1);
-        //                         }
-        //                     }
-        //                 };
-        //             }
-        //             _ => {}
-        //         }
-        //     }
-        // }
-        // if self.flags.contains(Flags::PIT) {
-        // };
-        let id = format_ident!("{}_{}", bindname(module), bindname(name));
-        return Ok(quote! {
-            ctx.#id(#root::_rexport::tuple_list::tuple_list!(#(#params),*))
-        });
     }
-    pub(crate) fn old_render_ty(&self, ctx: &TokenStream, ty: Type) -> TokenStream {
-        if self.core.flags.contains(Flags::NEW_ABI) {
-            panic!("old backend only supports old abi")
-        }
-        let root = self.core.crate_path.clone();
-        match ty {
-            Type::I32 => quote! {u32},
-            Type::I64 => quote! {u64},
-            Type::F32 => quote! {f32},
-            Type::F64 => quote! {f64},
-            Type::V128 => quote! {u128},
-            Type::Heap(WithNullable {
-                nullable,
-                value: HeapType::Sig { sig_index },
-            }) if matches!(
-                &self.module.signatures[sig_index],
-                SignatureData::Func { .. }
-            ) =>
-            {
-                let data = &self.module.signatures[sig_index];
-                let SignatureData::Func {
-                    params, returns, ..
-                } = data
-                else {
-                    unreachable!()
-                };
-                let params = params.iter().map(|x| self.old_render_ty(ctx, *x));
-                let returns = returns.iter().map(|x| self.old_render_ty(ctx, *x));
-                let mut x = if self.core.flags.contains(Flags::ASYNC) {
-                    quote! {
-                        #root::func::unsync::Df<#root::_rexport::tuple_list::tuple_list_type!(#(#params),*),#root::_rexport::tuple_list::tuple_list_type!(#(#returns),*),#ctx>
-                    }
-                } else {
-                    quote! {
-                        #root::func::Df<#root::_rexport::tuple_list::tuple_list_type!(#(#params),*),#root::_rexport::tuple_list::tuple_list_type!(#(#returns),*),#ctx>
-                    }
-                };
-                if nullable {
-                    x = quote! {
-                        Option<#x>
-                    }
-                }
-                x
-            }
-            _ => quasiquote! {#{self.old_fp()}::Value<#ctx>},
+    let m2 = format_ident!("{m}");
+    Ok(quote! {
+        ctx.#m2()
+    })
+}
+pub(crate) fn import(
+    opts: &Opts<'_>,
+    module: &str,
+    name: &str,
+    mut params: impl Iterator<Item = TokenStream>,
+) -> anyhow::Result<TokenStream> {
+    let params = params.collect::<Vec<_>>();
+    for pl in opts.core.plugins.iter() {
+        if let Some(a) = pl.import(&opts.core, module, name, params.clone())? {
+            return Ok(a);
         }
     }
-    pub(crate) fn old_render_generics(
-        &self,
-        ctx: &TokenStream,
-        data: &SignatureData,
-    ) -> TokenStream {
-        if self.core.flags.contains(Flags::NEW_ABI) {
-            panic!("old backend only supports old abi")
-        }
-        let root = self.core.crate_path.clone();
-        let SignatureData::Func {
-            params, returns, ..
-        } = data
-        else {
-            todo!()
-        };
-        let params2 = params.iter().map(|x| self.old_render_ty(ctx, *x));
-        let param_ids = params
-            .iter()
-            .enumerate()
-            .map(|(a, _)| format_ident!("p{a}"));
-        let returns = returns.iter().map(|x| self.old_render_ty(ctx, *x));
-        quote! {
-            #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*),#root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)
-        }
+    let mut params = params.into_iter();
+    let root = opts.core.crate_path.clone();
+    // if self.flags.contains(Flags::UNSANDBOXED) {
+    // if self.flags.contains(Flags::HOST_MEMORY) {
+    //     if let Some(a) = module.strip_prefix("!!unsafe/"){
+    //         if a == "linux"{
+    //             if let Some(s) = name.strip_prefix("syscall"){
+    //                 if let Some((s,_)) = s.split_once("/"){
+    //                     if let Some(l) = self.roots.get("linux-syscall"){
+    //                         return quasiquote! {
+    //                             #{fp(opts)}::ret(match #l::syscall!(#l::#{format_ident!("SYS_{s}")}, #(#params),*).try_usize(){
+    //                                 Ok(a) => Ok(a as u64),
+    //                                 Err(e) => Err(e.into())
+    //                             })
+    //                         };
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
+    // if self.flags.contains(Flags::WASIX) {
+    //     if module == "wasi_snapshot_preview1" || module == "wasix_32v1" {
+    //         return quasiquote! {
+    //             #root::wasix::#{format_ident!("{name}")}(#(#params),*)
+    //         };
+    //     }
+    // }
+    // if self.flags.contains(Flags::BIND) {
+    //     if module == "wars/bind" {
+    //         if name == "!!drop" {
+    //             return quasiquote! {
+    //                 {
+    //                     let v = self.data().rust_table.remove(#(#params),*).unwrap();
+    //                     Ok(())
+    //                 }
+    //             };
+    //         }
+    //         let params = params.collect::<Vec<_>>();
+    //         return quasiquote! {
+    //             {
+    //                 let v = #{syn::parse_str::<TokenStream>(&name).unwrap()}(#(unsafe{#root::get_cell(self.data().rust_table.get(&#params)).unwrap()}),*)#{if self.flags.contains(Flags::ASYNC){
+    //                     quote!{.await}
+    //                 }else{
+    //                     quote!{}
+    //                 }};
+    //                 v.map(|x|(alloc(&mut self.data().rust_table,#root::any_cell(x)),()))
+    //             }
+    //         };
+    //     }
+    // }
+    //     if a == "fs" {
+    //         match name {
+    //             "open" => {
+    //                 let p0 = params.next().unwrap();
+    //                 let l = params.next().unwrap();
+    //                 return quote! {
+    //                     #root::_rexport::tramp::BorrowRec::Ret({
+    //                         let f = #p0;
+    //                         let l = #l;
+    //                         let f = ::std::str::from_utf8(&ctx.memory()[(f as usize)..][..(l as usize)]);
+    //                         let f = match f{
+    //                             Ok(a) => a,
+    //                             Err(e) => return #root::_rexport::tramp::BorrowRec::Ret(Er(e.into()));
+    //                         };
+    //                         let f = ::std::fs::open(f);
+    //                         let f = match f{
+    //                             Ok(a) =>  alloc(&mut ctx.data().files,::std::sync::Arc::new(a)) * 2,
+    //                             Err(e) => alloc(&mut ctx.data().io_errors,::std::sync::Arc::new(e)) * 2 + 1;
+    //                         };
+    //                         f
+    //                     })
+    //                 };
+    //             }
+    //             "read" => {
+    //                 let fd = params.next().unwrap();
+    //                 let p0 = params.next().unwrap();
+    //                 let l = params.next().unwrap();
+    //                 return quote! {
+    //                     {
+    //                         let f = #p0;
+    //                         let l = #l;
+    //                         let fd = #fd;
+    //                         let fd = ctx.data().files.get(&fd).unwrap().clone();
+    //                         let f = &mut ctx.memory()[(f as usize)..][..(l as usize)];
+    //                         let f = ::std::io::Read::read(&mut fd.as_ref(),f);
+    //                         match f{
+    //                             Ok(a) =>                               #root::_rexport::tuple_list::tuple_list!(a as u64 * 2),
+    //                             Err(e) => #root::_rexport::tuple_list::tuple_list!(alloc(&mut ctx.data().io_errors,::std::sync::Arc::new(e)) as u64 * 2 + 1);
+    //                         }
+    //                     }
+    //                 };
+    //             }
+    //             "write" => {
+    //                 let fd = params.next().unwrap();
+    //                 let p0 = params.next().unwrap();
+    //                 let l = params.next().unwrap();
+    //                 return quote! {
+    //                     {
+    //                         let f = #p0;
+    //                         let l = #l;
+    //                         let fd = #fd;
+    //                         let fd = ctx.data().files.get(&fd).unwrap().clone();
+    //                         let f = &ctx.memory()[(f as usize)..][..(l as usize)];
+    //                         let f = ::std::io::Write::write(&mut fd.as_ref(),f);
+    //                         match f{
+    //                             Ok(a) =>                               #root::_rexport::tuple_list::tuple_list!(a as u64 * 2),
+    //                             Err(e) => #root::_rexport::tuple_list::tuple_list!(alloc(&mut ctx.data().io_errors,::std::sync::Arc::new(e)) as u64 * 2 + 1);
+    //                         }
+    //                     }
+    //                 };
+    //             }
+    //             _ => {}
+    //         }
+    //     }
+    // }
+    // if self.flags.contains(Flags::PIT) {
+    // };
+    let id = format_ident!("{}_{}", bindname(module), bindname(name));
+    return Ok(quote! {
+        ctx.#id(#root::_rexport::tuple_list::tuple_list!(#(#params),*))
+    });
+}
+pub(crate) fn render_ty(opts: &Opts<'_>, ctx: &TokenStream, ty: Type) -> TokenStream {
+    if opts.core.flags.contains(Flags::NEW_ABI) {
+        panic!("old backend only supports old abi")
     }
-    pub(crate) fn old_render_fn_sig(&self, name: Ident, data: &SignatureData) -> TokenStream {
-        if self.core.flags.contains(Flags::NEW_ABI) {
-            panic!("old backend only supports old abi")
-        }
-        let root = self.core.crate_path.clone();
-        let base = self.core.name.clone();
-        let ctx = quote! {C};
-        // let data = &self.module.signatures[sig_index];
-        let SignatureData::Func {
-            params, returns, ..
-        } = data
-        else {
-            todo!()
-        };
-        let params2 = params.iter().map(|x| self.old_render_ty(&ctx, *x));
-        let param_ids = params
-            .iter()
-            .enumerate()
-            .map(|(a, _)| format_ident!("p{a}"));
-        let returns = returns.iter().map(|x| self.old_render_ty(&ctx, *x));
-        let mut x = if self.core.flags.contains(Flags::ASYNC) {
-            quote! {
-                fn #name<'a,C: #base + 'static>(ctx: &'a mut C, #root::_rexport::tuple_list::tuple_list!(#(#param_ids),*): #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)) -> impl #root::func::unsync::UnwrappedAsyncRec<'a,#root::_rexport::anyhow::Result<#root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)>>
-            }
-        } else {
-            quote! {
-                fn #name<'a,C: #base + 'static>(ctx: &'a mut C, #root::_rexport::tuple_list::tuple_list!(#(#param_ids),*): #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)) -> #root::_rexport::tramp::BorrowRec<'a,#root::_rexport::anyhow::Result<#root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)>>
-            }
-        };
-        if let Some(t) = self.core.roots.get("tracing") {
-            x = quote! {
-                #[#t::instrument]
-                #x
-            };
-        }
-        return x;
-    }
-    pub(crate) fn old_fname(&self, a: Func) -> Ident {
-        format_ident!("{a}_{}", bindname(self.module.funcs[a].name()))
-    }
-    pub(crate) fn old_render_fun_ref(&self, ctx: &TokenStream, x: Func) -> TokenStream {
-        let root = self.core.crate_path.clone();
-        if x.is_invalid() {
-            return quasiquote! {
-                #{self.old_fp()}::da::<(),(),C,_>(|ctx,arg|panic!("invalid func"))
-            };
-        }
-        let generics =
-            self.old_render_generics(ctx, &self.module.signatures[self.module.funcs[x].sig()]);
-        let x = self.old_fname(x);
-        let r = if self.core.flags.contains(Flags::ASYNC) {
-            quasiquote!(#root::func::unsync::AsyncRec::wrap(res))
-        } else {
-            quasiquote!(res)
-        };
-        quasiquote! {
-            #{self.old_fp()}::da::<#generics,C,_>(|ctx,arg|match #x(ctx,arg){
-                res => #r
-            })
-        }
-    }
-    pub(crate) fn old_render_self_sig(
-        &self,
-        name: Ident,
-        wrapped: Ident,
-        data: &SignatureData,
-    ) -> TokenStream {
-        self.old_render_export(name, wrapped, data)
-    }
-    pub(crate) fn old_render_export(
-        &self,
-        name: Ident,
-        wrapped: Ident,
-        data: &SignatureData,
-    ) -> TokenStream {
-        if self.core.flags.contains(Flags::NEW_ABI) {
-            panic!("old backend only supports old abi")
-        }
-        let SignatureData::Func {
-            params, returns, ..
-        } = data
-        else {
-            todo!()
-        };
-        let root = self.core.crate_path.clone();
-        let base = self.core.name.clone();
-        let ctx = quote! {Self};
-        // let data = &self.module.signatures[sig_index];
-        let params2 = params.iter().map(|x| self.old_render_ty(&ctx, *x));
-        let param_ids = params
-            .iter()
-            .enumerate()
-            .map(|(a, _)| format_ident!("p{a}"))
-            .collect::<Vec<_>>();
-        let returns = returns.iter().map(|x| self.old_render_ty(&ctx, *x));
-        if self.core.flags.contains(Flags::ASYNC) {
-            quote! {
-                fn #name<'a>(self: &'a mut Self, #root::_rexport::tuple_list::tuple_list!(#(#param_ids),*): #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)) -> #root::func::unsync::AsyncRec<'a,#root::_rexport::anyhow::Result<#root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)>> where Self: 'static{
-                    return #root::func::unsync::AsyncRec::wrap(#wrapped(self,#root::_rexport::tuple_list::tuple_list!(#(#param_ids),*)));
-                }
-            }
-        } else {
-            quote! {
-                fn #name<'a>(self: &'a mut Self, #root::_rexport::tuple_list::tuple_list!(#(#param_ids),*): #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)) -> #root::_rexport::tramp::BorrowRec<'a,#root::_rexport::anyhow::Result<#root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)>> where Self: 'static{
-                    return #wrapped(self,#root::_rexport::tuple_list::tuple_list!(#(#param_ids),*));
-                }
-            }
-        }
-    }
-    pub(crate) fn old_render_self_sig_import(
-        &self,
-        name: Ident,
-        data: &SignatureData,
-    ) -> TokenStream {
-        if self.core.flags.contains(Flags::NEW_ABI) {
-            panic!("old backend only supports old abi")
-        }
-        let SignatureData::Func {
-            params, returns, ..
-        } = data
-        else {
-            todo!()
-        };
-        let root = self.core.crate_path.clone();
-        let base = self.core.name.clone();
-        let ctx = quote! {Self};
-        // let data = &self.module.signatures[sig_index];
-        let params2 = params.iter().map(|x| self.old_render_ty(&ctx, *x));
-        let param_ids = params
-            .iter()
-            .enumerate()
-            .map(|(a, _)| format_ident!("p{a}"))
-            .collect::<Vec<_>>();
-        let returns = returns.iter().map(|x| self.old_render_ty(&ctx, *x));
-        if self.core.flags.contains(Flags::ASYNC) {
-            quote! {
-                fn #name<'a>(self: &'a mut Self, imp: #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)) -> #root::func::unsync::AsyncRec<'a,#root::_rexport::anyhow::Result<#root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)>> where Self: 'static;
-            }
-        } else {
-            quote! {
-                fn #name<'a>(self: &'a mut Self, imp: #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)) -> #root::_rexport::tramp::BorrowRec<'a,#root::_rexport::anyhow::Result<#root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)>> where Self: 'static;
-            }
-        }
-    }
-    fn render_statements(
-        &self,
-        f: &Func,
-        b: &FunctionBody,
-        stmts: Block,
-    ) -> anyhow::Result<Vec<TokenStream>> {
-        let root = self.core.crate_path.clone();
-        let fp = self.old_fp();
-        let stmts = b.blocks[stmts].params.iter().map(|a|a.1).chain(b.blocks[stmts].insts.iter().filter_map(|a|a.pure_core())).map(|a|{
-            let av = b.values[a].tys(&b.type_pool).iter().enumerate().map(|b|mangle_value(a,b.0));
-            let b = match &b.values[a]{
-                waffle::ValueDef::BlockParam(k, i, _) => {
-                    let a = format_ident!("{k}param{i}");
-                    quote! {
-                        #root::_rexport::tuple_list::tuple_list!(#a.clone())
-                    }
-                },
-                waffle::ValueDef::Operator(o, vals, _) => {
-                    let vals = &b.arg_pool[*vals];
-                    match o{
-                        Operator::I32Const { value } => quote! {
-                            #root::_rexport::tuple_list::tuple_list!(#value)
-                        },
-                        Operator::I64Const { value } => quote!{
-                            #root::_rexport::tuple_list::tuple_list!(#value)
-                        },
-                        Operator::Call { function_index } => {
-                            match self.module.funcs[*function_index].body(){
-                                Some(_) => {
-                                    let func = self.old_fname(*function_index);
-                                    let vals = vals.iter().map(|a|format_ident!("{a}"));
-                                    quasiquote! {
-                                        {
-                                            let x = #func(ctx,#root::_rexport::tuple_list::tuple_list!(#(#fp::cast::<_,_,C>(#vals .clone())),*));
-                                            match #{if self.core.flags.contains(Flags::ASYNC){
-                                                quote!{
-                                                    x.go().await
-                                                }
-                                            }else{
-                                                quote!{
-                                                    #root::_rexport::tramp::tramp(x)
-                                                }
-                                            }}{
-                                                Ok(a) => a,
-                                                Err(e) => return #{self.old_fp()}::ret(Err(e))
-                                            }
-                                        }
-                                    }
-                                },
-                                None => {
-                                    let i = self
-                                    .module
-                                    .imports
-                                    .iter()
-                                    .find(|a| a.kind == ImportKind::Func(*function_index))
-                                    .unwrap();
-                                let x = self.old_import(
-                                    i.module.as_str(),
-                                    i.name.as_str(),
-                                    vals.iter().map(|a|format_ident!("{a}")).map(|a| quote! {#a}),
-                                )?;
-                                quasiquote!{
-                                    match #{if self.core.flags.contains(Flags::ASYNC){
-                                        quasiquote!{
-                                            #{self.old_alloc()}::boxed::Box::pin(#x.go()).await
-                                        }
-                                    }else{
-                                        quote!{
-                                            #root::_rexport::tramp::tramp(#x)
-                                        }
-                                    }}{
-                                        Ok(a) => a,
-                                        Err(e) => return #{self.old_fp()}::ret(Err(e))
-                                    }
-                                }
-                                }
-                            }
-                        },
-                        Operator::CallRef { sig_index } => {
-                            let mut vals = vals.to_owned();
-                            let r = vals.pop().expect(" a ref to call");
-                                // let func = format_ident!("{function_index}");
-                                let vals = vals.iter().map(|a|format_ident!("{a}"));
-                                let r = format_ident!("{r}");
-                                let g = self.old_render_generics(&quote! {c}, &self.module.signatures[*sig_index]);
-                                quasiquote! {
-                                    {
-                                    let x = #{self.old_fp()}::call_ref::<#g,C>(ctx,#{self.old_fp()}(#r.clone()),#root::_rexport::tuple_list::tuple_list!(#(#fp::cast::<_,_,C>(#vals .clone())),*));
-                                    match #{if self.core.flags.contains(Flags::ASYNC){
-                                        quote!{
-                                            x.go().await
-                                        }
-                                    }else{
-                                        quote!{
-                                            #root::_rexport::tramp::tramp(x)
-                                        }
-                                    }}{
-                                        Ok(a) => a,
-                                        Err(e) => return #{self.old_fp()}::ret(Err(e))
-                                    }
-                                }
-                                }
-                        },
-                        Operator::CallIndirect { sig_index, table_index } => {
-                            let t = format_ident!("{table_index}");
-                            let mut vals = vals.to_owned();
-                            let r = vals.pop().expect("a table index to call");
-                                // let func = format_ident!("{function_index}");
-                                let vals = vals.iter().map(|a|format_ident!("{a}"));
-                                let r = format_ident!("{r}");
-                                let r = quote! {
-                                    ctx.#t()[#r as usize]
-                                };
-                                let g = self.old_render_generics(&quote! {c}, &self.module.signatures[*sig_index]);
-                                quasiquote! {
-                                    {
-                                    let r = #r.clone();
-                                    let x = #{self.old_fp()}::call_ref::<#g,C>(ctx,#{self.old_fp()}::cast(r),#root::_rexport::tuple_list::tuple_list!(#(#fp::cast::<_,_,C>(#vals .clone())),*));
-                                    match #{if self.core.flags.contains(Flags::ASYNC){
-                                        quote!{
-                                            x.go().await
-                                        }
-                                    }else{
-                                        quote!{
-                                            #root::_rexport::tramp::tramp(x)
-                                        }
-                                    }}{
-                                        Ok(a) => a,
-                                        Err(e) => return #{self.old_fp()}::ret(Err(e))
-                                    }
-                                }
-                                }
-                        },
-                        Operator::RefFunc { func_index } => {
-                            self.old_render_fun_ref(&quote! {C},*func_index)
-                        },
-                        waffle::Operator::MemorySize { mem } => {
-                            let rt = if self.module.memories[*mem].memory64{
-                                quote! {u64}
-                            }else{
-                                quote! {u32}
-                            };
-                            let n = match &self.module.memories[*mem].page_size_log2{
-                                None => 65536usize,
-                                Some(a) => 2usize.pow(*a)
-                            };
-                            let m = Ident::new(&mem.to_string(), Span::call_site());
-                            quasiquote! {
-                                #root::_rexport::tuple_list::tuple_list!(((match #root::Memory::size(ctx.#m()){
-                                    Ok(a) => a,
-                                    Err(e) => return #{self.old_fp()}::ret(Err(e))
-                                }) / #n) as #rt)
-                            }
-                        }
-                        waffle::Operator::MemoryGrow { mem } => {
-                            let m = Ident::new(&mem.to_string(), Span::call_site());
-                            let a = vals[0];
-                            let a = format_ident!("{a}");
-                            let rt = if self.module.memories[*mem].memory64{
-                                quote! {u64}
-                            }else{
-                                quote! {u32}
-                            };
-                            let n = match &self.module.memories[*mem].page_size_log2{
-                                None => 65536usize,
-                                Some(a) => 2usize.pow(*a)
-                            };
-                            quasiquote! {
-                                {
-                                let vn = (match #root::Memory::size(ctx.#m()){
-                                    Ok(a) => a,
-                                    Err(e) => return #{self.old_fp()}::ret(Err(e))
-                                }) / #n;
-                                match #root::Memory::grow(ctx.#m(),(#a .clone() as u64) * #n){
-                                    Ok(a) => a,
-                                    Err(e) => return #{self.old_fp()}::ret(Err(e))
-                                };
-                                #root::_rexport::tuple_list::tuple_list!(vn as #rt)
-                                }
-                            }
-                        },
-                        waffle::Operator::MemoryCopy { dst_mem, src_mem } => {
-                            let dst = self.old_mem(*dst_mem)?;
-                            let src = self.old_mem(*src_mem)?;
-                            let dst_ptr = format_ident!("{}",vals[0].to_string());
-                            let src_ptr = format_ident!("{}",vals[1].to_string());
-                            let len = format_ident!("{}",vals[2].to_string());
-                            quasiquote!{
-                                {
-                                    let m = match #src.read(#src_ptr as u64,#len as u64){
-                                        Ok(a) => a,
-                                        Err(e) => return #{self.old_fp()}::ret(Err(e))
-                                    }.as_ref().as_ref().to_owned();
-                                    match #dst.write(#dst_ptr as u64,&m){
-                                        Ok(a) => a,
-                                        Err(e) => return #{self.old_fp()}::ret(Err(e))
-                                    };
-                                ()
-                                }
-                            }
-                        },
-                        waffle::Operator::MemoryFill { mem } => {
-                            let dst = self.old_mem(*mem)?;
-                            // let src = self.old_mem(*src_mem);
-                            let dst_ptr = format_ident!("{}",vals[0].to_string());
-                            let val = format_ident!("{}",vals[1].to_string());
-                            let len = format_ident!("{}",vals[2].to_string());
-                            quasiquote!{
-                                {
-                                    let m = #{self.old_alloc()}::vec![(#val & 0xff) as u8; #len as usize];
-                                    match #dst.write(#dst_ptr as u64,&m){
-                                        Ok(a) => a,
-                                        Err(e) => return #{self.old_fp()}::ret(Err(e))
-                                    };
-                                ()
-                                }
-                            }
-                        },
-                        waffle::Operator::GlobalGet { global_index } => {
-                            let g = Ident::new(&global_index.to_string(), Span::call_site());
-                            quote!{
-                                #root::_rexport::tuple_list::tuple_list!(*ctx.#g())
-                            }
-                        }
-                        waffle::Operator::GlobalSet { global_index } => {
-                            let g = Ident::new(&global_index.to_string(), Span::call_site());
-                            let r = vals[0];
-                            let r = format_ident!("{r}");
-                            quote!{
-                                {
-                                    *ctx.#g() = #r;
-                                    ()
-                                }
-                            }
-                        }
-                        Operator::TableGet { table_index } => {
-                            let table = format_ident!("{table_index}");
-                            let [i,..] = vals else{
-                                unreachable!()
-                            };
-                            let i = format_ident!("{i}");
-                            // let j = format_ident!("{j}");
-                            quasiquote!{
-                                {
-                                (ctx.#table()[#i as usize].clone(),())
-                                }
-                            }
-                        },
-                        Operator::TableSet { table_index } => {
-                            let table = format_ident!("{table_index}");
-                            let [i,j,..] = vals else{
-                                unreachable!()
-                            };
-                            let i = format_ident!("{i}");
-                            let j = format_ident!("{j}");
-                            quasiquote!{
-                                {
-                                ctx.#table()[#i as usize] = #{self.old_fp()}::cast::<_,_,C>(#j.clone());
-                                ()
-                                }
-                            }
-                        },
-                        Operator::TableSize { table_index } => {
-                            let table = format_ident!("{table_index}");
-                            quote!{
-                                (ctx.#table().len() as u32,())
-                            }
-                        },
-                        Operator::TableGrow { table_index } => {
-                            let table = format_ident!("{table_index}");
-                            let [i,j,..] = vals else{
-                                unreachable!()
-                            };
-                            let i = format_ident!("{i}");
-                            let j = format_ident!("{j}");
-                            quasiquote!{
-                                {
-                                    for _ in 0..#i{
-                                        ctx.#table().push(#{self.old_fp()}::cast::<_,_,C>(#j.clone()));
-                                    }
-                                    ()
-                                }
-                            }
-                        },
-                        Operator::StructNew { sig } => {
-                            let vals = vals.iter().zip(match &self.module.signatures[*sig]{
-                                SignatureData::Struct { fields,.. } => fields.iter(),
-                                _ => anyhow::bail!("not a struct")
-                            }).map(|(v,f)|quasiquote!{
-                                #root::gc::#{if f.mutable{
-                                    quote!{Mut}
-                                }else{
-                                    quote!{Const}
-                                }}(#{format_ident!("{v}")})
-                            });
-                            quasiquote!{
-                                #{self.old_fp()}::cast::<_,_,C>(#root::gc::Struct(#root::_rexport::tuple_list::tuple_list!(#(#vals),*)))
-                            }
-                        }
-                        Operator::StructGet { sig, idx } => {
-                            let [i,..] = vals else{
-                                unreachable!()
-                            };
-                            let i = format_ident!("{i}");
-                            quasiquote!{
-                                {self.old_fp()}::cast::<_,_,C>(match #i.clone().0{
-                                    #{self.old_fp()}::value::Value::Gc(g) => g.get_field(#idx),
-                                    _ => todo!()
-                                })
-                            }
-                        }
-                        Operator::StructSet { sig, idx } => {
-                            let [i,j,..] = vals else{
-                                unreachable!()
-                            };
-                            let i = format_ident!("{i}");
-                            let j = format_ident!("{j}");
-                            quasiquote!{
-                                match #i.clone().0{
-                                    #{self.old_fp()}::value::Value::Gc(g) => g.set_field(#idx,#{self.old_fp()}::cast::<_,_,C>(#j.clone())),
-                                    _ => todo!()
-                                }
-                            }
-                        }
-                        _ if waffle::op_traits::mem_count(o) == 1 => {
-                            let mut mem = Memory::invalid();
-                            waffle::op_traits::rewrite_mem(&mut o.clone(), &mut [();4], |m,_|{
-                                mem = *m;
-                                Ok::<(),Infallible>(())
-                            }).expect("wut");
-                            // let clean = o.to_string();
-                            let clean = format_ident!("{}",o.to_string().split_once("<").expect("a memory op").0);
-                            let m2 = mem;
-                            let mem = self.old_mem(m2)?;
-                            let mut vals = vals.iter().map(|a|format_ident!("{a}"));
-                            let rt = if self.module.memories[m2].memory64{
-                                quote! {u64}
-                            }else{
-                                quote! {u32}
-                            };
-                            let offset = waffle::op_traits::memory_arg(o).expect(&format!("a memory arg from {}",o)).offset;
-                            let offset =  if self.module.memories[m2].memory64{
-                                quote! {#offset}
-                            } else{
-                                let offset = offset as u32;
-                                quote! {#offset}
-                            };
-                            let val = vals.next().expect("the runtime memory offset");
-                            let vals = once(quote! {(#val.clone() + #offset)}).chain(vals.map(|w|quote!{#w}));
-                            quasiquote! {
-                                match #root::#clean::<#rt,_>(#mem,#(#fp::cast::<_,_,C>(#vals .clone())),*){
-                                    Ok(a) => a,
-                                    Err(e) => return #{self.old_fp()}::ret(Err(e))
-                                }
-                            }
-                        },
-                        Operator::Select | Operator::TypedSelect { .. } => {
-                            let vals: Vec<_> = vals.iter().map(|a|format_ident!("{a}")).collect();
-                            let cond = vals[0].clone();
-                            let then = vals[1].clone();
-                            let els = vals[2].clone();
-                            quote!{
-                                #root::_rexport::tuple_list::tuple_list!(if #cond != 0{
-                                    #then
-                                }else{
-                                    #els.into()
-                                })
-                            }
-                        },
-                        _ => {
-                            // let clean = o.to_string();
-                            let clean = format_ident!("{o}");
-                            let vals = vals.iter().map(|a|format_ident!("{a}"));
-                            quasiquote! {
-                                match #root::#clean(#(#fp::cast::<_,_,C>(#vals .clone())),*){
-                                    Ok(a) => a,
-                                    Err(e) => return #{self.old_fp()}::ret(Err(e))
-                                }
-                            }
-                        }
-                    }
-                },
-                waffle::ValueDef::PickOutput(w, i, _) => {
-                    let w = mangle_value(*w, *i as usize);
-                    quote! {
-                        #root::_rexport::tuple_list::tuple_list!(#w)
-                    }
-                },
-                waffle::ValueDef::Alias(w) => {
-                    let w = format_ident!("{w}");
-                    quote! {
-                        #root::_rexport::tuple_list::tuple_list!(#w)
-                    }
-                },
-                waffle::ValueDef::Placeholder(_) => todo!(),
-                // waffle::ValueDef::Trace(_, _) => todo!(),
-                waffle::ValueDef::None => todo!(),
-            };
-            anyhow::Ok(quote! {
-                let #root::_rexport::tuple_list::tuple_list!(#(#av),*) = #b
-            })
-        }).collect::<anyhow::Result<Vec<_>>>()?;
-        return Ok(stmts);
-    }
-    fn render_term(
-        &self,
-        f: Func,
-        b: &FunctionBody,
-        k: Block,
-        render_target: &impl Fn(&BlockTarget) -> TokenStream,
-    ) -> anyhow::Result<TokenStream> {
-        let root = self.core.crate_path.clone();
-        Ok(match &b.blocks[k].terminator.terminator {
-            waffle::Terminator::Br { target } => render_target(target),
-            waffle::Terminator::CondBr {
-                cond,
-                if_true,
-                if_false,
-            } => {
-                let if_true = render_target(if_true);
-                let if_false = render_target(if_false);
-                let cond = format_ident!("{cond}");
-                quote! {
-                    if #cond != 0{
-                        #if_true
-                    }else{
-                        #if_false
-                    }
-                }
-            }
-            waffle::Terminator::Select {
-                value,
-                targets,
-                default,
-            } => {
-                let value = format_ident!("{value}");
-                let default = render_target(default);
-                let targets = targets
-                    .iter()
-                    .map(&render_target)
-                    .enumerate()
-                    .map(|(a, b)| {
-                        quote! {
-                            #a => {#b}
-                        }
-                    });
-                quote! {
-                    match #value as usize{
-                        #(#targets),*,
-                        _ => {#default},
-                    }
-                }
-            }
-            waffle::Terminator::Return { values } => {
-                // let values = values.iter().map(|v| format_ident!("{v}"));
-                let values = b.rets.iter().enumerate().map(|(a, _)| match values.get(a) {
-                    Some(v) => {
-                        let v = format_ident!("{v}");
-                        quasiquote! {
-                            #{self.old_fp()}::cast::<_,_,C>(#v)
-                        }
-                    }
-                    None => {
-                        quote! {
-                            ::core::default::Default::default()
-                        }
-                    }
-                });
-                quasiquote! {
-                    return #{self.old_fp()}::ret(Ok(#root::_rexport::tuple_list::tuple_list!(#(#values),*)))
-                }
-            }
-            waffle::Terminator::ReturnCall { func, args } => {
-                match self.module.funcs[*func].body() {
-                    Some(_) => {
-                        let values = args.iter().map(|v| format_ident!("{v}")).map(|a| {
-                            quasiquote! {
-                                #{self.old_fp()}::cast::<_,_,C>(#a)
-                            }
-                        });
-                        let func = self.old_fname(*func);
-                        if self.core.flags.contains(Flags::ASYNC) {
-                            quote! {
-                                #func(ctx,#root::_rexport::tuple_list::tuple_list!(#(#values),*))
-                            }
-                        } else {
-                            quote! {
-                                return #root::_rexport::tramp::BorrowRec::Call(#root::_rexport::tramp::Thunk::new(move||{
-                                    #func(ctx,#root::_rexport::tuple_list::tuple_list!(#(#values),*))
-                                }))
-                            }
-                        }
-                    }
-                    None => {
-                        let i = self
-                            .module
-                            .imports
-                            .iter()
-                            .find(|a| a.kind == ImportKind::Func(*func))
-                            .unwrap();
-                        let x = self.old_import(
-                            i.module.as_str(),
-                            i.name.as_str(),
-                            args.iter()
-                                .map(|a| format_ident!("{a}"))
-                                .map(|a| quote! {#a}),
-                        )?;
-                        if self.core.flags.contains(Flags::ASYNC) {
-                            x
-                        } else {
-                            quote! {
-                                return #root::_rexport::tramp::BorrowRec::Call(#root::_rexport::tramp::Thunk::new(move||{#x}))
-                            }
-                        }
-                    }
-                }
-            }
-            waffle::Terminator::ReturnCallIndirect { sig, table, args } => {
-                let t = format_ident!("{table}");
-                let mut vals = args.to_owned();
-                let r = vals.pop().expect("a table index to call");
-                // let func = format_ident!("{function_index}");
-                let vals = vals.iter().map(|a| format_ident!("{a}")).map(|a| {
-                    quasiquote! {
-                        #{self.old_fp()}::cast::<_,_,C>(#a)
-                    }
-                });
-                let r = format_ident!("{r}");
-                let r = quote! {
-                    ctx.#t()[#r as usize]
-                };
-                let g = self.old_render_generics(&quote! {c}, &self.module.signatures[*sig]);
-                if self.core.flags.contains(Flags::ASYNC) {
-                    quasiquote! {
-                        return #{self.old_fp()}::call_ref::<#g,C>(ctx,#{self.old_fp()}::cast(r),#root::_rexport::tuple_list::tuple_list!(#(#{self.old_fp()}::cast::<_,_,C>(#vals .clone())),*))
-                    }
-                } else {
-                    quasiquote! {
-                            let r = #r.clone();
-                            return #root::_rexport::tramp::BorrowRec::Call(#root::_rexport::tramp::Thunk::new(move||{
-                            #{self.old_fp()}::call_ref::<#g,C>(ctx,#{self.old_fp()}::cast(r),#root::_rexport::tuple_list::tuple_list!(#(#{self.old_fp()}::cast::<_,_,C>(#vals .clone())),*))
-                        }))
-                    }
-                }
-            }
-            waffle::Terminator::ReturnCallRef { sig, args } => {
-                let mut vals = args.clone();
-                let r = vals.pop().expect(" a ref to call");
-                // let func = format_ident!("{function_index}");
-                let vals = vals.iter().map(|a| format_ident!("{a}")).map(|a| {
-                    quasiquote! {
-                        #{self.old_fp()}::cast::<_,_,C>(#a)
-                    }
-                });
-                let r = format_ident!("{r}");
-                let g = self.old_render_generics(&quote! {c}, &self.module.signatures[*sig]);
-                if self.core.flags.contains(Flags::ASYNC) {
-                    quasiquote! {
-                        return #{self.old_fp()}::call_ref::<#g,C>(ctx,#root::func::cast(#r.clone()),#root::_rexport::tuple_list::tuple_list!(#(#root::func::cast::<_,_,C>(#vals .clone())),*))
-                    }
-                } else {
-                    quasiquote! {
-                            return #root::_rexport::tramp::BorrowRec::Call(#root::_rexport::tramp::Thunk::new(move||{
-                            #{self.old_fp()}::call_ref::<#g,C>(ctx,#root::func::cast(#r.clone()),#root::_rexport::tuple_list::tuple_list!(#(#root::func::cast::<_,_,C>(#vals .clone())),*))
-                        }))
-                    }
-                }
-            }
-            waffle::Terminator::Unreachable => quote! {
+    let root = opts.core.crate_path.clone();
+    match ty {
+        Type::I32 => quote! {u32},
+        Type::I64 => quote! {u64},
+        Type::F32 => quote! {f32},
+        Type::F64 => quote! {f64},
+        Type::V128 => quote! {u128},
+        Type::Heap(WithNullable {
+            nullable,
+            value: HeapType::Sig { sig_index },
+        }) if matches!(
+            &opts.module.signatures[sig_index],
+            SignatureData::Func { .. }
+        ) =>
+        {
+            let data = &opts.module.signatures[sig_index];
+            let SignatureData::Func {
+                params, returns, ..
+            } = data
+            else {
                 unreachable!()
-            },
-            waffle::Terminator::None => panic!("none block terminator"),
-            _ => todo!(),
+            };
+            let params = params.iter().map(|x| render_ty(opts, ctx, *x));
+            let returns = returns.iter().map(|x| render_ty(opts, ctx, *x));
+            let mut x = if opts.core.flags.contains(Flags::ASYNC) {
+                quote! {
+                    #root::func::unsync::Df<#root::_rexport::tuple_list::tuple_list_type!(#(#params),*),#root::_rexport::tuple_list::tuple_list_type!(#(#returns),*),#ctx>
+                }
+            } else {
+                quote! {
+                    #root::func::Df<#root::_rexport::tuple_list::tuple_list_type!(#(#params),*),#root::_rexport::tuple_list::tuple_list_type!(#(#returns),*),#ctx>
+                }
+            };
+            if nullable {
+                x = quote! {
+                    Option<#x>
+                }
+            }
+            x
+        }
+        _ => quasiquote! {#{fp(opts)}::Value<#ctx>},
+    }
+}
+pub(crate) fn render_generics(
+    opts: &Opts<'_>,
+    ctx: &TokenStream,
+    data: &SignatureData,
+) -> TokenStream {
+    if opts.core.flags.contains(Flags::NEW_ABI) {
+        panic!("old backend only supports old abi")
+    }
+    let root = opts.core.crate_path.clone();
+    let SignatureData::Func {
+        params, returns, ..
+    } = data
+    else {
+        todo!()
+    };
+    let params2 = params.iter().map(|x| render_ty(opts, ctx, *x));
+    let param_ids = params
+        .iter()
+        .enumerate()
+        .map(|(a, _)| format_ident!("p{a}"));
+    let returns = returns.iter().map(|x| render_ty(opts, ctx, *x));
+    quote! {
+        #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*),#root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)
+    }
+}
+pub(crate) fn render_fn_sig(opts: &Opts<'_>, name: Ident, data: &SignatureData) -> TokenStream {
+    if opts.core.flags.contains(Flags::NEW_ABI) {
+        panic!("old backend only supports old abi")
+    }
+    let root = opts.core.crate_path.clone();
+    let base = opts.core.name.clone();
+    let ctx = quote! {C};
+    // let data = &self.module.signatures[sig_index];
+    let SignatureData::Func {
+        params, returns, ..
+    } = data
+    else {
+        todo!()
+    };
+    let params2 = params.iter().map(|x| render_ty(opts, &ctx, *x));
+    let param_ids = params
+        .iter()
+        .enumerate()
+        .map(|(a, _)| format_ident!("p{a}"));
+    let returns = returns.iter().map(|x| render_ty(opts, &ctx, *x));
+    let mut x = if opts.core.flags.contains(Flags::ASYNC) {
+        quote! {
+            fn #name<'a,C: #base + 'static>(ctx: &'a mut C, #root::_rexport::tuple_list::tuple_list!(#(#param_ids),*): #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)) -> impl #root::func::unsync::UnwrappedAsyncRec<'a,#root::_rexport::anyhow::Result<#root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)>>
+        }
+    } else {
+        quote! {
+            fn #name<'a,C: #base + 'static>(ctx: &'a mut C, #root::_rexport::tuple_list::tuple_list!(#(#param_ids),*): #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)) -> #root::_rexport::tramp::BorrowRec<'a,#root::_rexport::anyhow::Result<#root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)>>
+        }
+    };
+    if let Some(t) = opts.core.roots.get("tracing") {
+        x = quote! {
+            #[#t::instrument]
+            #x
+        };
+    }
+    return x;
+}
+pub(crate) fn fname(opts: &Opts<'_>, a: Func) -> Ident {
+    format_ident!("{a}_{}", bindname(opts.module.funcs[a].name()))
+}
+pub(crate) fn render_fun_ref(opts: &Opts<'_>, ctx: &TokenStream, x: Func) -> TokenStream {
+    let root = opts.core.crate_path.clone();
+    if x.is_invalid() {
+        return quasiquote! {
+            #{fp(opts)}::da::<(),(),C,_>(|ctx,arg|panic!("invalid func"))
+        };
+    }
+    let generics =
+        render_generics(opts, ctx, &opts.module.signatures[opts.module.funcs[x].sig()]);
+    let x = fname(opts, x);
+    let r = if opts.core.flags.contains(Flags::ASYNC) {
+        quasiquote!(#root::func::unsync::AsyncRec::wrap(res))
+    } else {
+        quasiquote!(res)
+    };
+    quasiquote! {
+        #{fp(opts)}::da::<#generics,C,_>(|ctx,arg|match #x(ctx,arg){
+            res => #r
         })
     }
-    pub(crate) fn old_render_relooped_block(
-        &self,
-        f: Func,
-        x: &ShapedBlock<Block>,
-    ) -> anyhow::Result<TokenStream> {
-        let root = self.core.crate_path.clone();
-        let b = self.module.funcs[f].body().unwrap();
-        Ok(match x {
-            ShapedBlock::Simple(s) => {
-                let stmts = s.label;
-                fn term(b: &BranchMode) -> TokenStream {
-                    match b {
-                        relooper::BranchMode::LoopBreak(l) => {
-                            let l = Lifetime::new(&format!("'l{}", l), Span::call_site());
-                            quote! {
-                                break #l;
-                            }
-                        }
-                        relooper::BranchMode::LoopBreakIntoMulti(l) => {
-                            let l = Lifetime::new(&format!("'l{}", l), Span::call_site());
-                            quote! {
-                                break #l;
-                            }
-                        }
-                        relooper::BranchMode::LoopContinue(l) => {
-                            let l = Lifetime::new(&format!("'l{}", l), Span::call_site());
-                            quote! {
-                                continue #l;
-                            }
-                        }
-                        relooper::BranchMode::LoopContinueIntoMulti(l) => {
-                            let l = Lifetime::new(&format!("'l{}", l), Span::call_site());
-                            quote! {
-                                continue #l;
-                            }
-                        }
-                        relooper::BranchMode::MergedBranch => {
-                            quote! {}
-                        }
-                        relooper::BranchMode::MergedBranchIntoMulti => quote! {},
-                        relooper::BranchMode::SetLabelAndBreak => quote! {
-                            break 'cff;
-                        },
-                    }
+}
+pub(crate) fn render_self_sig(
+    opts: &Opts<'_>,
+    name: Ident,
+    wrapped: Ident,
+    data: &SignatureData,
+) -> TokenStream {
+    render_export(opts, name, wrapped, data)
+}
+pub(crate) fn render_export(
+    opts: &Opts<'_>,
+    name: Ident,
+    wrapped: Ident,
+    data: &SignatureData,
+) -> TokenStream {
+    if opts.core.flags.contains(Flags::NEW_ABI) {
+        panic!("old backend only supports old abi")
+    }
+    let SignatureData::Func {
+        params, returns, ..
+    } = data
+    else {
+        todo!()
+    };
+    let root = opts.core.crate_path.clone();
+    let base = opts.core.name.clone();
+    let ctx = quote! {Self};
+    // let data = &self.module.signatures[sig_index];
+    let params2 = params.iter().map(|x| render_ty(opts, &ctx, *x));
+    let param_ids = params
+        .iter()
+        .enumerate()
+        .map(|(a, _)| format_ident!("p{a}"))
+        .collect::<Vec<_>>();
+    let returns = returns.iter().map(|x| render_ty(opts, &ctx, *x));
+    if opts.core.flags.contains(Flags::ASYNC) {
+        quote! {
+            fn #name<'a>(self: &'a mut Self, #root::_rexport::tuple_list::tuple_list!(#(#param_ids),*): #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)) -> #root::func::unsync::AsyncRec<'a,#root::_rexport::anyhow::Result<#root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)>> where Self: 'static{
+                return #root::func::unsync::AsyncRec::wrap(#wrapped(self,#root::_rexport::tuple_list::tuple_list!(#(#param_ids),*)));
+            }
+        }
+    } else {
+        quote! {
+            fn #name<'a>(self: &'a mut Self, #root::_rexport::tuple_list::tuple_list!(#(#param_ids),*): #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)) -> #root::_rexport::tramp::BorrowRec<'a,#root::_rexport::anyhow::Result<#root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)>> where Self: 'static{
+                return #wrapped(self,#root::_rexport::tuple_list::tuple_list!(#(#param_ids),*));
+            }
+        }
+    }
+}
+pub(crate) fn render_self_sig_import(
+    opts: &Opts<'_>,
+    name: Ident,
+    data: &SignatureData,
+) -> TokenStream {
+    if opts.core.flags.contains(Flags::NEW_ABI) {
+        panic!("old backend only supports old abi")
+    }
+    let SignatureData::Func {
+        params, returns, ..
+    } = data
+    else {
+        todo!()
+    };
+    let root = opts.core.crate_path.clone();
+    let base = opts.core.name.clone();
+    let ctx = quote! {Self};
+    // let data = &self.module.signatures[sig_index];
+    let params2 = params.iter().map(|x| render_ty(opts, &ctx, *x));
+    let param_ids = params
+        .iter()
+        .enumerate()
+        .map(|(a, _)| format_ident!("p{a}"))
+        .collect::<Vec<_>>();
+    let returns = returns.iter().map(|x| render_ty(opts, &ctx, *x));
+    if opts.core.flags.contains(Flags::ASYNC) {
+        quote! {
+            fn #name<'a>(self: &'a mut Self, imp: #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)) -> #root::func::unsync::AsyncRec<'a,#root::_rexport::anyhow::Result<#root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)>> where Self: 'static;
+        }
+    } else {
+        quote! {
+            fn #name<'a>(self: &'a mut Self, imp: #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)) -> #root::_rexport::tramp::BorrowRec<'a,#root::_rexport::anyhow::Result<#root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)>> where Self: 'static;
+        }
+    }
+}
+fn render_statements(
+    opts: &Opts<'_>,
+    f: &Func,
+    b: &FunctionBody,
+    stmts: Block,
+) -> anyhow::Result<Vec<TokenStream>> {
+    let root = opts.core.crate_path.clone();
+    let fp_ts = fp(opts);
+    let stmts = b.blocks[stmts].params.iter().map(|a|a.1).chain(b.blocks[stmts].insts.iter().filter_map(|a|a.pure_core())).map(|a|{
+        let av = b.values[a].tys(&b.type_pool).iter().enumerate().map(|b|mangle_value(a,b.0));
+        let b = match &b.values[a]{
+            waffle::ValueDef::BlockParam(k, i, _) => {
+                let a = format_ident!("{k}param{i}");
+                quote! {
+                    #root::_rexport::tuple_list::tuple_list!(#a.clone())
                 }
-                if stmts.is_invalid() {
-                    let immediate = s
-                        .immediate
-                        .as_ref()
-                        .map(|a| self.old_render_relooped_block(f, a.as_ref()))
-                        .transpose()?
-                        .unwrap_or_default();
-                    let next = s
-                        .next
-                        .as_ref()
-                        .map(|a| self.old_render_relooped_block(f, a.as_ref()))
-                        .transpose()?
-                        .unwrap_or_default();
-                    let term2 = term(
-                        &s.branches
-                            .get(&b.entry)
-                            .cloned()
-                            .unwrap_or(relooper::BranchMode::MergedBranch),
-                    );
-                    return Ok(quote! {
-                        #term2;
-                        #immediate;
-                        #next;
-                    });
-                }
-                let fp = self.old_fp();
-                let stmts = self.render_statements(&f, b, stmts)?;
-                let render_target = |k: &BlockTarget| {
-                    let vars = k.args.iter().enumerate().map(|(i, a)| {
-                        let a = format_ident!("{a}");
-                        let i = format_ident!("{}param{i}", k.block.to_string());
+            },
+            waffle::ValueDef::Operator(o, vals, _) => {
+                let vals = &b.arg_pool[*vals];
+                match o{
+                    Operator::I32Const { value } => quote! {
+                        #root::_rexport::tuple_list::tuple_list!(#value)
+                    },
+                    Operator::I64Const { value } => quote!{
+                        #root::_rexport::tuple_list::tuple_list!(#value)
+                    },
+                    Operator::Call { function_index } => {
+                        match opts.module.funcs[*function_index].body(){
+                            Some(_) => {
+                                let func = fname(opts, *function_index);
+                                let vals = vals.iter().map(|a|format_ident!("{a}"));
+                                quasiquote! {
+                                    {
+                                        let x = #func(ctx,#root::_rexport::tuple_list::tuple_list!(#(#fp_ts::cast::<_,_,C>(#vals .clone())),*));
+                                        match #{if opts.core.flags.contains(Flags::ASYNC){
+                                            quote!{
+                                                x.go().await
+                                            }
+                                        }else{
+                                            quote!{
+                                                #root::_rexport::tramp::tramp(x)
+                                            }
+                                        }}{
+                                            Ok(a) => a,
+                                            Err(e) => return #{fp(opts)}::ret(Err(e))
+                                        }
+                                    }
+                                }
+                            },
+                            None => {
+                                let i = opts
+                                .module
+                                .imports
+                                .iter()
+                                .find(|a| a.kind == ImportKind::Func(*function_index))
+                                .unwrap();
+                            let x = import(
+                                opts,
+                                i.module.as_str(),
+                                i.name.as_str(),
+                                vals.iter().map(|a|format_ident!("{a}")).map(|a| quote! {#a}),
+                            )?;
+                            quasiquote!{
+                                match #{if opts.core.flags.contains(Flags::ASYNC){
+                                    quasiquote!{
+                                        #{alloc(opts)}::boxed::Box::pin(#x.go()).await
+                                    }
+                                }else{
+                                    quote!{
+                                        #root::_rexport::tramp::tramp(#x)
+                                    }
+                                }}{
+                                    Ok(a) => a,
+                                    Err(e) => return #{fp(opts)}::ret(Err(e))
+                                }
+                            }
+                            }
+                        }
+                    },
+                    Operator::CallRef { sig_index } => {
+                        let mut vals = vals.to_owned();
+                        let r = vals.pop().expect(" a ref to call");
+                            // let func = format_ident!("{function_index}");
+                            let vals = vals.iter().map(|a|format_ident!("{a}"));
+                            let r = format_ident!("{r}");
+                            let g = render_generics(opts, &quote! {c}, &opts.module.signatures[*sig_index]);
+                            quasiquote! {
+                                {
+                                let x = #{fp(opts)}::call_ref::<#g,C>(ctx,#{fp(opts)}(#r.clone()),#root::_rexport::tuple_list::tuple_list!(#(#fp_ts::cast::<_,_,C>(#vals .clone())),*));
+                                match #{if opts.core.flags.contains(Flags::ASYNC){
+                                    quote!{
+                                        x.go().await
+                                    }
+                                }else{
+                                    quote!{
+                                        #root::_rexport::tramp::tramp(x)
+                                    }
+                                }}{
+                                    Ok(a) => a,
+                                    Err(e) => return #{fp(opts)}::ret(Err(e))
+                                }
+                            }
+                            }
+                    },
+                    Operator::CallIndirect { sig_index, table_index } => {
+                        let t = format_ident!("{table_index}");
+                        let mut vals = vals.to_owned();
+                        let r = vals.pop().expect("a table index to call");
+                            // let func = format_ident!("{function_index}");
+                            let vals = vals.iter().map(|a|format_ident!("{a}"));
+                            let r = format_ident!("{r}");
+                            let r = quote! {
+                                ctx.#t()[#r as usize]
+                            };
+                            let g = render_generics(opts, &quote! {c}, &opts.module.signatures[*sig_index]);
+                            quasiquote! {
+                                {
+                                let r = #r.clone();
+                                let x = #{fp(opts)}::call_ref::<#g,C>(ctx,#{fp(opts)}::cast(r),#root::_rexport::tuple_list::tuple_list!(#(#fp_ts::cast::<_,_,C>(#vals .clone())),*));
+                                match #{if opts.core.flags.contains(Flags::ASYNC){
+                                    quote!{
+                                        x.go().await
+                                    }
+                                }else{
+                                    quote!{
+                                        #root::_rexport::tramp::tramp(x)
+                                    }
+                                }}{
+                                    Ok(a) => a,
+                                    Err(e) => return #{fp(opts)}::ret(Err(e))
+                                }
+                            }
+                            }
+                    },
+                    Operator::RefFunc { func_index } => {
+                        render_fun_ref(opts, &quote! {C},*func_index)
+                    },
+                    waffle::Operator::MemorySize { mem: mem_idx } => {
+                        let rt = if opts.module.memories[*mem_idx].memory64{
+                            quote! {u64}
+                        }else{
+                            quote! {u32}
+                        };
+                        let n = match &opts.module.memories[*mem_idx].page_size_log2{
+                            None => 65536usize,
+                            Some(a) => 2usize.pow(*a)
+                        };
+                        let m = Ident::new(&mem_idx.to_string(), Span::call_site());
                         quasiquote! {
-                            #i = #{self.old_fp()}::cast::<_,_,C>(#a);
+                            #root::_rexport::tuple_list::tuple_list!(((match #root::Memory::size(ctx.#m()){
+                                Ok(a) => a,
+                                Err(e) => return #{fp(opts)}::ret(Err(e))
+                            }) / #n) as #rt)
+                        }
+                    }
+                    waffle::Operator::MemoryGrow { mem: mem_idx } => {
+                        let m = Ident::new(&mem_idx.to_string(), Span::call_site());
+                        let a = vals[0];
+                        let a = format_ident!("{a}");
+                        let rt = if opts.module.memories[*mem_idx].memory64{
+                            quote! {u64}
+                        }else{
+                            quote! {u32}
+                        };
+                        let n = match &opts.module.memories[*mem_idx].page_size_log2{
+                            None => 65536usize,
+                            Some(a) => 2usize.pow(*a)
+                        };
+                        quasiquote! {
+                            {
+                            let vn = (match #root::Memory::size(ctx.#m()){
+                                Ok(a) => a,
+                                Err(e) => return #{fp(opts)}::ret(Err(e))
+                            }) / #n;
+                            match #root::Memory::grow(ctx.#m(),(#a .clone() as u64) * #n){
+                                Ok(a) => a,
+                                Err(e) => return #{fp(opts)}::ret(Err(e))
+                            };
+                            #root::_rexport::tuple_list::tuple_list!(vn as #rt)
+                            }
+                        }
+                    },
+                    waffle::Operator::MemoryCopy { dst_mem, src_mem } => {
+                        let dst = mem(opts, *dst_mem)?;
+                        let src = mem(opts, *src_mem)?;
+                        let dst_ptr = format_ident!("{}",vals[0].to_string());
+                        let src_ptr = format_ident!("{}",vals[1].to_string());
+                        let len = format_ident!("{}",vals[2].to_string());
+                        quasiquote!{
+                            {
+                                let m = match #src.read(#src_ptr as u64,#len as u64){
+                                    Ok(a) => a,
+                                    Err(e) => return #{fp(opts)}::ret(Err(e))
+                                }.as_ref().as_ref().to_owned();
+                                match #dst.write(#dst_ptr as u64,&m){
+                                    Ok(a) => a,
+                                    Err(e) => return #{fp(opts)}::ret(Err(e))
+                                };
+                            ()
+                            }
+                        }
+                    },
+                    waffle::Operator::MemoryFill { mem: mem_idx } => {
+                        let dst = mem(opts, *mem_idx)?;
+                        // let src = mem(opts, *src_mem);
+                        let dst_ptr = format_ident!("{}",vals[0].to_string());
+                        let val = format_ident!("{}",vals[1].to_string());
+                        let len = format_ident!("{}",vals[2].to_string());
+                        quasiquote!{
+                            {
+                                let m = #{alloc(opts)}::vec![(#val & 0xff) as u8; #len as usize];
+                                match #dst.write(#dst_ptr as u64,&m){
+                                    Ok(a) => a,
+                                    Err(e) => return #{fp(opts)}::ret(Err(e))
+                                };
+                            ()
+                            }
+                        }
+                    },
+                    waffle::Operator::GlobalGet { global_index } => {
+                        let g = Ident::new(&global_index.to_string(), Span::call_site());
+                        quote!{
+                            #root::_rexport::tuple_list::tuple_list!(*ctx.#g())
+                        }
+                    }
+                    waffle::Operator::GlobalSet { global_index } => {
+                        let g = Ident::new(&global_index.to_string(), Span::call_site());
+                        let r = vals[0];
+                        let r = format_ident!("{r}");
+                        quote!{
+                            {
+                                *ctx.#g() = #r;
+                                ()
+                            }
+                        }
+                    }
+                    Operator::TableGet { table_index } => {
+                        let table = format_ident!("{table_index}");
+                        let [i,..] = vals else{
+                            unreachable!()
+                        };
+                        let i = format_ident!("{i}");
+                        // let j = format_ident!("{j}");
+                        quasiquote!{
+                            {
+                            (ctx.#table()[#i as usize].clone(),())
+                            }
+                        }
+                    },
+                    Operator::TableSet { table_index } => {
+                        let table = format_ident!("{table_index}");
+                        let [i,j,..] = vals else{
+                            unreachable!()
+                        };
+                        let i = format_ident!("{i}");
+                        let j = format_ident!("{j}");
+                        quasiquote!{
+                            {
+                            ctx.#table()[#i as usize] = #{fp(opts)}::cast::<_,_,C>(#j.clone());
+                            ()
+                            }
+                        }
+                    },
+                    Operator::TableSize { table_index } => {
+                        let table = format_ident!("{table_index}");
+                        quote!{
+                            (ctx.#table().len() as u32,())
+                        }
+                    },
+                    Operator::TableGrow { table_index } => {
+                        let table = format_ident!("{table_index}");
+                        let [i,j,..] = vals else{
+                            unreachable!()
+                        };
+                        let i = format_ident!("{i}");
+                        let j = format_ident!("{j}");
+                        quasiquote!{
+                            {
+                                for _ in 0..#i{
+                                    ctx.#table().push(#{fp(opts)}::cast::<_,_,C>(#j.clone()));
+                                }
+                                ()
+                            }
+                        }
+                    },
+                    Operator::StructNew { sig } => {
+                        let vals = vals.iter().zip(match &opts.module.signatures[*sig]{
+                            SignatureData::Struct { fields,.. } => fields.iter(),
+                            _ => anyhow::bail!("not a struct")
+                        }).map(|(v,f)|quasiquote!{
+                            #root::gc::#{if f.mutable{
+                                quote!{Mut}
+                            }else{
+                                quote!{Const}
+                            }}(#{format_ident!("{v}")})
+                        });
+                        quasiquote!{
+                            #{fp(opts)}::cast::<_,_,C>(#root::gc::Struct(#root::_rexport::tuple_list::tuple_list!(#(#vals),*)))
+                        }
+                    }
+                    Operator::StructGet { sig, idx } => {
+                        let [i,..] = vals else{
+                            unreachable!()
+                        };
+                        let i = format_ident!("{i}");
+                        quasiquote!{
+                            {fp(opts)}::cast::<_,_,C>(match #i.clone().0{
+                                #{fp(opts)}::value::Value::Gc(g) => g.get_field(#idx),
+                                _ => todo!()
+                            })
+                        }
+                    }
+                    Operator::StructSet { sig, idx } => {
+                        let [i,j,..] = vals else{
+                            unreachable!()
+                        };
+                        let i = format_ident!("{i}");
+                        let j = format_ident!("{j}");
+                        quasiquote!{
+                            match #i.clone().0{
+                                #{fp(opts)}::value::Value::Gc(g) => g.set_field(#idx,#{fp(opts)}::cast::<_,_,C>(#j.clone())),
+                                _ => todo!()
+                            }
+                        }
+                    }
+                    _ if waffle::op_traits::mem_count(o) == 1 => {
+                        let mut mem_idx = Memory::invalid();
+                        waffle::op_traits::rewrite_mem(&mut o.clone(), &mut [();4], |m,_|{
+                            mem_idx = *m;
+                            Ok::<(),Infallible>(())
+                        }).expect("wut");
+                        // let clean = o.to_string();
+                        let clean = format_ident!("{}",o.to_string().split_once("<").expect("a memory op").0);
+                        let m2 = mem_idx;
+                        let mem_tok = mem(opts, m2)?;
+                        let mut vals = vals.iter().map(|a|format_ident!("{a}"));
+                        let rt = if opts.module.memories[m2].memory64{
+                            quote! {u64}
+                        }else{
+                            quote! {u32}
+                        };
+                        let offset = waffle::op_traits::memory_arg(o).expect(&format!("a memory arg from {}",o)).offset;
+                        let offset =  if opts.module.memories[m2].memory64{
+                            quote! {#offset}
+                        } else{
+                            let offset = offset as u32;
+                            quote! {#offset}
+                        };
+                        let val = vals.next().expect("the runtime memory offset");
+                        let vals = once(quote! {(#val.clone() + #offset)}).chain(vals.map(|w|quote!{#w}));
+                        quasiquote! {
+                            match #root::#clean::<#rt,_>(#mem_tok,#(#fp_ts::cast::<_,_,C>(#vals .clone())),*){
+                                Ok(a) => a,
+                                Err(e) => return #{fp(opts)}::ret(Err(e))
+                            }
+                        }
+                    },
+                    Operator::Select | Operator::TypedSelect { .. } => {
+                        let vals: Vec<_> = vals.iter().map(|a|format_ident!("{a}")).collect();
+                        let cond = vals[0].clone();
+                        let then = vals[1].clone();
+                        let els = vals[2].clone();
+                        quote!{
+                            #root::_rexport::tuple_list::tuple_list!(if #cond != 0{
+                                #then
+                            }else{
+                                #els.into()
+                            })
+                        }
+                    },
+                    _ => {
+                        // let clean = o.to_string();
+                        let clean = format_ident!("{o}");
+                        let vals = vals.iter().map(|a|format_ident!("{a}"));
+                        quasiquote! {
+                            match #root::#clean(#(#fp_ts::cast::<_,_,C>(#vals .clone())),*){
+                                Ok(a) => a,
+                                Err(e) => return #{fp(opts)}::ret(Err(e))
+                            }
+                        }
+                    }
+                }
+            },
+            waffle::ValueDef::PickOutput(w, i, _) => {
+                let w = mangle_value(*w, *i as usize);
+                quote! {
+                    #root::_rexport::tuple_list::tuple_list!(#w)
+                }
+            },
+            waffle::ValueDef::Alias(w) => {
+                let w = format_ident!("{w}");
+                quote! {
+                    #root::_rexport::tuple_list::tuple_list!(#w)
+                }
+            },
+            waffle::ValueDef::Placeholder(_) => todo!(),
+            // waffle::ValueDef::Trace(_, _) => todo!(),
+            waffle::ValueDef::None => todo!(),
+        };
+        anyhow::Ok(quote! {
+            let #root::_rexport::tuple_list::tuple_list!(#(#av),*) = #b
+        })
+    }).collect::<anyhow::Result<Vec<_>>>()?;
+    return Ok(stmts);
+}
+fn render_term(
+    opts: &Opts<'_>,
+    f: Func,
+    b: &FunctionBody,
+    k: Block,
+    render_target: &impl Fn(&BlockTarget) -> TokenStream,
+) -> anyhow::Result<TokenStream> {
+    let root = opts.core.crate_path.clone();
+    Ok(match &b.blocks[k].terminator.terminator {
+        waffle::Terminator::Br { target } => render_target(target),
+        waffle::Terminator::CondBr {
+            cond,
+            if_true,
+            if_false,
+        } => {
+            let if_true = render_target(if_true);
+            let if_false = render_target(if_false);
+            let cond = format_ident!("{cond}");
+            quote! {
+                if #cond != 0{
+                    #if_true
+                }else{
+                    #if_false
+                }
+            }
+        }
+        waffle::Terminator::Select {
+            value,
+            targets,
+            default,
+        } => {
+            let value = format_ident!("{value}");
+            let default = render_target(default);
+            let targets = targets
+                .iter()
+                .map(&render_target)
+                .enumerate()
+                .map(|(a, b)| {
+                    quote! {
+                        #a => {#b}
+                    }
+                });
+            quote! {
+                match #value as usize{
+                    #(#targets),*,
+                    _ => {#default},
+                }
+            }
+        }
+        waffle::Terminator::Return { values } => {
+            // let values = values.iter().map(|v| format_ident!("{v}"));
+            let values = b.rets.iter().enumerate().map(|(a, _)| match values.get(a) {
+                Some(v) => {
+                    let v = format_ident!("{v}");
+                    quasiquote! {
+                        #{fp(opts)}::cast::<_,_,C>(#v)
+                    }
+                }
+                None => {
+                    quote! {
+                        ::core::default::Default::default()
+                    }
+                }
+            });
+            quasiquote! {
+                return #{fp(opts)}::ret(Ok(#root::_rexport::tuple_list::tuple_list!(#(#values),*)))
+            }
+        }
+        waffle::Terminator::ReturnCall { func, args } => {
+            match opts.module.funcs[*func].body() {
+                Some(_) => {
+                    let values = args.iter().map(|v| format_ident!("{v}")).map(|a| {
+                        quasiquote! {
+                            #{fp(opts)}::cast::<_,_,C>(#a)
                         }
                     });
-                    let br = term(
-                        &s.branches
-                            .get(&k.block)
-                            .cloned()
-                            .unwrap_or(relooper::BranchMode::MergedBranch),
-                    );
-                    let bi = k.block.index();
-                    quote! {
-                        #(#vars);*;
-                        cff = #bi;
-                        #br
+                    let func = fname(opts, *func);
+                    if opts.core.flags.contains(Flags::ASYNC) {
+                        quote! {
+                            #func(ctx,#root::_rexport::tuple_list::tuple_list!(#(#values),*))
+                        }
+                    } else {
+                        quote! {
+                            return #root::_rexport::tramp::BorrowRec::Call(#root::_rexport::tramp::Thunk::new(move||{
+                                #func(ctx,#root::_rexport::tuple_list::tuple_list!(#(#values),*))
+                            }))
+                        }
                     }
-                };
-                let term = self.render_term(f, b, s.label, &render_target)?;
+                }
+                None => {
+                    let i = opts
+                        .module
+                        .imports
+                        .iter()
+                        .find(|a| a.kind == ImportKind::Func(*func))
+                        .unwrap();
+                    let x = import(
+                        opts,
+                        i.module.as_str(),
+                        i.name.as_str(),
+                        args.iter()
+                            .map(|a| format_ident!("{a}"))
+                            .map(|a| quote! {#a}),
+                    )?;
+                    if opts.core.flags.contains(Flags::ASYNC) {
+                        x
+                    } else {
+                        quote! {
+                            return #root::_rexport::tramp::BorrowRec::Call(#root::_rexport::tramp::Thunk::new(move||{#x}))
+                        }
+                    }
+                }
+            }
+        }
+        waffle::Terminator::ReturnCallIndirect { sig, table, args } => {
+            let t = format_ident!("{table}");
+            let mut vals = args.to_owned();
+            let r = vals.pop().expect("a table index to call");
+            // let func = format_ident!("{function_index}");
+            let vals = vals.iter().map(|a| format_ident!("{a}")).map(|a| {
+                quasiquote! {
+                    #{fp(opts)}::cast::<_,_,C>(#a)
+                }
+            });
+            let r = format_ident!("{r}");
+            let r = quote! {
+                ctx.#t()[#r as usize]
+            };
+            let g = render_generics(opts, &quote! {c}, &opts.module.signatures[*sig]);
+            if opts.core.flags.contains(Flags::ASYNC) {
+                quasiquote! {
+                    return #{fp(opts)}::call_ref::<#g,C>(ctx,#{fp(opts)}::cast(r),#root::_rexport::tuple_list::tuple_list!(#(#{fp(opts)}::cast::<_,_,C>(#vals .clone())),*))
+                }
+            } else {
+                quasiquote! {
+                        let r = #r.clone();
+                        return #root::_rexport::tramp::BorrowRec::Call(#root::_rexport::tramp::Thunk::new(move||{
+                        #{fp(opts)}::call_ref::<#g,C>(ctx,#{fp(opts)}::cast(r),#root::_rexport::tuple_list::tuple_list!(#(#{fp(opts)}::cast::<_,_,C>(#vals .clone())),*))
+                    }))
+                }
+            }
+        }
+        waffle::Terminator::ReturnCallRef { sig, args } => {
+            let mut vals = args.clone();
+            let r = vals.pop().expect(" a ref to call");
+            // let func = format_ident!("{function_index}");
+            let vals = vals.iter().map(|a| format_ident!("{a}")).map(|a| {
+                quasiquote! {
+                    #{fp(opts)}::cast::<_,_,C>(#a)
+                }
+            });
+            let r = format_ident!("{r}");
+            let g = render_generics(opts, &quote! {c}, &opts.module.signatures[*sig]);
+            if opts.core.flags.contains(Flags::ASYNC) {
+                quasiquote! {
+                    return #{fp(opts)}::call_ref::<#g,C>(ctx,#root::func::cast(#r.clone()),#root::_rexport::tuple_list::tuple_list!(#(#root::func::cast::<_,_,C>(#vals .clone())),*))
+                }
+            } else {
+                quasiquote! {
+                        return #root::_rexport::tramp::BorrowRec::Call(#root::_rexport::tramp::Thunk::new(move||{
+                        #{fp(opts)}::call_ref::<#g,C>(ctx,#root::func::cast(#r.clone()),#root::_rexport::tuple_list::tuple_list!(#(#root::func::cast::<_,_,C>(#vals .clone())),*))
+                    }))
+                }
+            }
+        }
+        waffle::Terminator::Unreachable => quote! {
+            unreachable!()
+        },
+        waffle::Terminator::None => panic!("none block terminator"),
+        _ => todo!(),
+    })
+}
+pub(crate) fn render_relooped_block(
+    opts: &Opts<'_>,
+    f: Func,
+    x: &ShapedBlock<Block>,
+) -> anyhow::Result<TokenStream> {
+    let root = opts.core.crate_path.clone();
+    let b = opts.module.funcs[f].body().unwrap();
+    Ok(match x {
+        ShapedBlock::Simple(s) => {
+            let stmts = s.label;
+            fn term(b: &BranchMode) -> TokenStream {
+                match b {
+                    relooper::BranchMode::LoopBreak(l) => {
+                        let l = Lifetime::new(&format!("'l{}", l), Span::call_site());
+                        quote! {
+                            break #l;
+                        }
+                    }
+                    relooper::BranchMode::LoopBreakIntoMulti(l) => {
+                        let l = Lifetime::new(&format!("'l{}", l), Span::call_site());
+                        quote! {
+                            break #l;
+                        }
+                    }
+                    relooper::BranchMode::LoopContinue(l) => {
+                        let l = Lifetime::new(&format!("'l{}", l), Span::call_site());
+                        quote! {
+                            continue #l;
+                        }
+                    }
+                    relooper::BranchMode::LoopContinueIntoMulti(l) => {
+                        let l = Lifetime::new(&format!("'l{}", l), Span::call_site());
+                        quote! {
+                            continue #l;
+                        }
+                    }
+                    relooper::BranchMode::MergedBranch => {
+                        quote! {}
+                    }
+                    relooper::BranchMode::MergedBranchIntoMulti => quote! {},
+                    relooper::BranchMode::SetLabelAndBreak => quote! {
+                        break 'cff;
+                    },
+                }
+            }
+            if stmts.is_invalid() {
                 let immediate = s
                     .immediate
                     .as_ref()
-                    .map(|a| self.old_render_relooped_block(f, a.as_ref()))
+                    .map(|a| render_relooped_block(opts, f, a.as_ref()))
                     .transpose()?
                     .unwrap_or_default();
                 let next = s
                     .next
                     .as_ref()
-                    .map(|a| self.old_render_relooped_block(f, a.as_ref()))
+                    .map(|a| render_relooped_block(opts, f, a.as_ref()))
                     .transpose()?
                     .unwrap_or_default();
-                quote! {
-                    #(#stmts);*;
-                    #term;
+                let term2 = term(
+                    &s.branches
+                        .get(&b.entry)
+                        .cloned()
+                        .unwrap_or(relooper::BranchMode::MergedBranch),
+                );
+                return Ok(quote! {
+                    #term2;
                     #immediate;
                     #next;
-                }
-            }
-            ShapedBlock::Loop(l) => {
-                let r = self.old_render_relooped_block(f, &l.inner.as_ref())?;
-                let next = l
-                    .next
-                    .as_ref()
-                    .map(|a| self.old_render_relooped_block(f, a.as_ref()))
-                    .transpose()?
-                    .unwrap_or_default();
-                let l = Lifetime::new(&format!("'l{}", l.loop_id), Span::call_site());
-                quote! {
-                    #l : loop{
-                        #r
-                    };
-                    #next;
-                }
-            }
-            ShapedBlock::Multiple(k) => {
-                let initial = k.handled.iter().enumerate().flat_map(|(a, b)| {
-                    b.labels.iter().map(move |l| {
-                        let l = l.index();
-                        quote! {
-                            #l => #a
-                        }
-                    })
                 });
-                let cases = k
-                    .handled
-                    .iter()
-                    .enumerate()
-                    .map(|(a, i)| {
-                        let ib = self.old_render_relooped_block(f, &i.inner)?;
-                        let ic = if i.break_after {
-                            quote! {}
-                        } else {
-                            quote! {
-                                cff2 += 1;
-                                continue 'cff
-                            }
-                        };
-                        Ok(quote! {
-                            #a => {
-                                #ib;
-                                #ic;
-                            }
-                        })
-                    })
-                    .collect::<anyhow::Result<Vec<_>>>()?;
-                quote! {
-                    let mut cff2 = match cff{
-                        #(#initial),*,
-                        _ => unreachable!()
-                    };
-                    'cff: loop{
-                        match cff2{
-                            #(#cases),*,
-                            _ => unreachable!()
-                        };
-                        break 'cff;
-                    };
-                }
             }
-        })
-    }
-    pub(crate) fn old_render_fn(&self, f: Func) -> anyhow::Result<TokenStream> {
-        let name = self.old_fname(f);
-        let sig = self.old_render_fn_sig(
-            name.clone(),
-            &self.module.signatures[self.module.funcs[f].sig()],
-        );
-        let root = self.core.crate_path.clone();
-        let Some(b) = self.module.funcs[f].body() else {
-            let fsig = self.module.funcs[f].sig();
-            let fsig = &self.module.signatures[fsig];
-            let SignatureData::Func {
-                params, returns, ..
-            } = fsig
-            else {
-                todo!()
+            let fp_ts = fp(opts);
+            let stmts = render_statements(opts, &f, b, stmts)?;
+            let render_target = |k: &BlockTarget| {
+                let vars = k.args.iter().enumerate().map(|(i, a)| {
+                    let a = format_ident!("{a}");
+                    let i = format_ident!("{}param{i}", k.block.to_string());
+                    quasiquote! {
+                        #i = #{fp(opts)}::cast::<_,_,C>(#a);
+                    }
+                });
+                let br = term(
+                    &s.branches
+                        .get(&k.block)
+                        .cloned()
+                        .unwrap_or(relooper::BranchMode::MergedBranch),
+                );
+                let bi = k.block.index();
+                quote! {
+                    #(#vars);*;
+                    cff = #bi;
+                    #br
+                }
             };
-            let params = params
-                .iter()
-                .enumerate()
-                .map(|(a, _)| format_ident!("p{a}"));
-            let i = self
-                .module
-                .imports
-                .iter()
-                .find(|a| a.kind == ImportKind::Func(f))
-                .unwrap();
-            let x = self.old_import(
-                i.module.as_str(),
-                i.name.as_str(),
-                params.map(|a| quote! {#a}),
-            )?;
-            return Ok(quote! {
-                #sig {
-                    return #x;
-                }
-            });
-        };
-        let cfg = CFGInfo::new(b);
-        // let values = b.values.entries().flat_map(|(a, d)| {
-        //     return d
-        //         .tys(&b.type_pool)
-        //         .iter()
-        //         .map(move |ty| self.old_render_ty(&quote! {c}, *ty))
-        //         .chain(once(quote! {
-        //             () = ()
-        //         }))
-        //         .enumerate()
-        //         .map(move |(i, ty)| {
-        //             let a = mangle_value(a, i);
-        //             quote! {
-        //                 #a: #ty
-        //             }
-        //         });
-        // });
-        let bpvalues = b.blocks.entries().flat_map(|(k, d)| {
-            d.params.iter().enumerate().map(move |(i, (ty, _))| {
-                let x = match ty {
-                    Type::Heap(WithNullable {
-                        nullable,
-                        value: HeapType::Sig { sig_index },
-                    }) if !nullable => self.old_render_fun_ref(&quote! {C}, Func::invalid()),
-                    _ => quote! {
-                        Default::default()
-                    },
-                };
-                let ty = self.old_render_ty(&quote! {c}, ty.clone());
-                let a = format_ident!("{k}param{i}");
-                if k == b.entry {
-                    let p = format_ident!("p{i}");
-                    quote! {
-                        #a: #ty = #p
-                    }
-                } else {
-                    quote! {
-                        #a: #ty = #x
-                    }
-                }
-            })
-        });
-        let reloop = waffle_func_reloop::go(b);
-        // let reloop = std::panic::catch_unwind(|| {
-        //     reloop(
-        //         b.blocks
-        //             .entries()
-        //             .filter(|k| cfg.dominates(b.entry, k.0))
-        //             .map(|(k, l)| {
-        //                 (
-        //                     k,
-        //                     l.succs
-        //                         .iter()
-        //                         .cloned()
-        //                         .chain(b.blocks.iter().filter(|x| cfg.dominates(*x, k)))
-        //                         .collect(),
-        //                 )
-        //             })
-        //             .chain(once((Block::invalid(), vec![b.entry])))
-        //             .collect(),
-        //         Block::invalid(),
-        //     )
-        // });
-        // let reloop = match reloop {
-        //     Ok(a) => a,
-        //     Err(e) => {
-        //         panic!(
-        //             "reloop failure ({}) in {}",
-        //             e.downcast_ref::<&str>()
-        //                 .map(|a| *a)
-        //                 .unwrap_or("unknown panic"),
-        //             b.display("", None)
-        //         );
-        //     }
-        // };
-        let x = self.old_render_relooped_block(f, reloop.as_ref())?;
-        let mut b = quote! {
-            let mut cff: usize = 0;
-            #(let mut #bpvalues);*;
-            #x;
-            panic!("should have returned");
-        };
-        if self.core.flags.contains(Flags::ASYNC) {
-            b = quasiquote! {
-                return #{self.old_alloc()}::boxed::Box::pin(async move{
-                    #b
-                })
+            let term = render_term(opts, f, b, s.label, &render_target)?;
+            let immediate = s
+                .immediate
+                .as_ref()
+                .map(|a| render_relooped_block(opts, f, a.as_ref()))
+                .transpose()?
+                .unwrap_or_default();
+            let next = s
+                .next
+                .as_ref()
+                .map(|a| render_relooped_block(opts, f, a.as_ref()))
+                .transpose()?
+                .unwrap_or_default();
+            quote! {
+                #(#stmts);*;
+                #term;
+                #immediate;
+                #next;
             }
         }
-        Ok(quote! {
+        ShapedBlock::Loop(l) => {
+            let r = render_relooped_block(opts, f, &l.inner.as_ref())?;
+            let next = l
+                .next
+                .as_ref()
+                .map(|a| render_relooped_block(opts, f, a.as_ref()))
+                .transpose()?
+                .unwrap_or_default();
+            let l = Lifetime::new(&format!("'l{}", l.loop_id), Span::call_site());
+            quote! {
+                #l : loop{
+                    #r
+                };
+                #next;
+            }
+        }
+        ShapedBlock::Multiple(k) => {
+            let initial = k.handled.iter().enumerate().flat_map(|(a, b)| {
+                b.labels.iter().map(move |l| {
+                    let l = l.index();
+                    quote! {
+                        #l => #a
+                    }
+                })
+            });
+            let cases = k
+                .handled
+                .iter()
+                .enumerate()
+                .map(|(a, i)| {
+                    let ib = render_relooped_block(opts, f, &i.inner)?;
+                    let ic = if i.break_after {
+                        quote! {}
+                    } else {
+                        quote! {
+                            cff2 += 1;
+                            continue 'cff
+                        }
+                    };
+                    Ok(quote! {
+                        #a => {
+                            #ib;
+                            #ic;
+                        }
+                    })
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            quote! {
+                let mut cff2 = match cff{
+                    #(#initial),*,
+                    _ => unreachable!()
+                };
+                'cff: loop{
+                    match cff2{
+                        #(#cases),*,
+                        _ => unreachable!()
+                    };
+                    break 'cff;
+                };
+            }
+        }
+    })
+}
+pub(crate) fn render_fn(opts: &Opts<'_>, f: Func) -> anyhow::Result<TokenStream> {
+    let name = fname(opts, f);
+    let sig = render_fn_sig(
+        opts,
+        name.clone(),
+        &opts.module.signatures[opts.module.funcs[f].sig()],
+    );
+    let root = opts.core.crate_path.clone();
+    let Some(b) = opts.module.funcs[f].body() else {
+        let fsig = opts.module.funcs[f].sig();
+        let fsig = &opts.module.signatures[fsig];
+        let SignatureData::Func {
+            params, returns, ..
+        } = fsig
+        else {
+            todo!()
+        };
+        let params = params
+            .iter()
+            .enumerate()
+            .map(|(a, _)| format_ident!("p{a}"));
+        let i = opts
+            .module
+            .imports
+            .iter()
+            .find(|a| a.kind == ImportKind::Func(f))
+            .unwrap();
+        let x = import(
+            opts,
+            i.module.as_str(),
+            i.name.as_str(),
+            params.map(|a| quote! {#a}),
+        )?;
+        return Ok(quote! {
             #sig {
-                #b
+                return #x;
+            }
+        });
+    };
+    let cfg = CFGInfo::new(b);
+    let bpvalues = b.blocks.entries().flat_map(|(k, d)| {
+        d.params.iter().enumerate().map(move |(i, (ty, _))| {
+            let x = match ty {
+                Type::Heap(WithNullable {
+                    nullable,
+                    value: HeapType::Sig { sig_index },
+                }) if !nullable => render_fun_ref(opts, &quote! {C}, Func::invalid()),
+                _ => quote! {
+                    Default::default()
+                },
+            };
+            let ty = render_ty(opts, &quote! {c}, ty.clone());
+            let a = format_ident!("{k}param{i}");
+            if k == b.entry {
+                let p = format_ident!("p{i}");
+                quote! {
+                    #a: #ty = #p
+                }
+            } else {
+                quote! {
+                    #a: #ty = #x
+                }
             }
         })
+    });
+    let reloop = waffle_func_reloop::go(b);
+    let x = render_relooped_block(opts, f, reloop.as_ref())?;
+    let mut b = quote! {
+        let mut cff: usize = 0;
+        #(let mut #bpvalues);*;
+        #x;
+        panic!("should have returned");
+    };
+    if opts.core.flags.contains(Flags::ASYNC) {
+        b = quasiquote! {
+            return #{alloc(opts)}::boxed::Box::pin(async move{
+                #b
+            })
+        }
     }
+    Ok(quote! {
+        #sig {
+            #b
+        }
+    })
 }
 
 impl<'a, X: AsRef<[u8]>> OptsLt<'a, X, LegacyPortalWaffleBackend> {
@@ -1359,41 +1316,15 @@ pub(crate) fn go(
             }
         }
     }
-    // let is = if opts.flags.contains(Flags::PIT) {
-    //     pit_patch::get_interfaces(&opts.module)
-    //         .unwrap()
-    //         .into_iter()
-    //         .collect::<BTreeSet<_>>()
-    // } else {
-    //     Default::default()
-    // };
-    // if opts.flags.contains(Flags::PIT) {
-    //     for x in is.iter() {
-    //         pit_patch::canon::canon(&mut opts.module, &x.rid_str(), PIT_NS).unwrap();
-    //     }
-    // }
-    // let mut module = waffle::Module::from_wasm_bytes(&opts.module, &Default::default()).unwrap();
-    // module.expand_all_funcs().unwrap();
-    // let mut module = module.without_orig_bytes();
-    // // module.per_func_body(|b|unswitch::go(b)); //TODO: reloop better and make it not needed
-    // // eprintln!("{}",module.display());
-    // module.per_func_body(|f| f.convert_to_max_ssa(None));
     let internal_path = format_ident!("_{}_internal", opts.core.name);
     let data = format_ident!("{}Data", opts.core.name);
     let name = opts.core.name.clone();
-    // let opts = Opts {
-    //     crate_path: opts.crate_path.clone(),
-    //     module,
-    //     name: name.clone(),
-    //     flags: opts.flags,
-    //     // cfg: opts.cfg.clone(),
-    // };
     let root = opts.core.crate_path.clone();
     let funcs = opts
         .module
         .funcs
         .iter()
-        .map(|a| opts.old_render_fn(a))
+        .map(|a| render_fn(&opts, a))
         .collect::<anyhow::Result<Vec<_>>>()?;
     let mut z = vec![];
     let mut fields = vec![];
@@ -1406,24 +1337,16 @@ pub(crate) fn go(
             #k : #v
         });
     }
-    // if (opts.flags.contains(Flags::BIND)) {
-    //     let k = format_ident!("rust_table");
-    //     fields.push(k.clone());
-    //     z.push(quasiquote! {
-    //         #k:  #{opts.old_alloc()}::collections::BTreeMap<u32,AnyCell>,
-    //     })
-    // }
     let mut init = vec![];
     for (t, d) in opts.module.tables.entries() {
-        // let dty = opts.old_render_ty(&quote! {Target}, d.ty.clone());
         let n = Ident::new(&t.to_string(), Span::call_site());
         z.push(quasiquote! {
-            #n: #{opts.old_alloc()}::vec::Vec<#{opts.old_fp()}::Value<Target>>
+            #n: #{alloc(&opts)}::vec::Vec<#{fp(&opts)}::Value<Target>>
         });
         fields.push(n.clone());
         sfields.push(n.clone());
         if let Some(e) = d.func_elements.as_ref() {
-            let e = e.iter().map(|x| opts.old_render_fun_ref(&quote! {C}, *x));
+            let e = e.iter().map(|x| render_fun_ref(&opts, &quote! {C}, *x));
             init.push(if opts.core.flags.contains(Flags::ASYNC) {
                 quote! {
                     #(ctx.data().#n.push(#root::func::unsync::Coe::coe(#e)));*;
@@ -1435,7 +1358,7 @@ pub(crate) fn go(
             })
         }
         fs.push(quasiquote! {
-            fn #n(&mut self) -> &mut #{opts.old_alloc()}::vec::Vec<#{opts.old_fp()}::Value<Self>>{
+            fn #n(&mut self) -> &mut #{alloc(&opts)}::vec::Vec<#{fp(&opts)}::Value<Self>>{
                 &mut self.data().#n
             }
         })
@@ -1443,7 +1366,7 @@ pub(crate) fn go(
     // eprintln!("before globals");
     for (g, d) in opts.module.globals.entries() {
         let n = Ident::new(&g.to_string(), Span::call_site());
-        let t = opts.old_render_ty(&quote! {Target}, d.ty.clone());
+        let t = render_ty(&opts, &quote! {Target}, d.ty.clone());
         z.push(quote! {
             #n : #t
         });
@@ -1461,31 +1384,21 @@ pub(crate) fn go(
         }
     }
     for (me, d) in opts.module.memories.entries() {
-        // let mut p = vec![];
-        // let mut pk = 0;
-        // for s in d.segments.clone() {
-        //     let f = s.clone().offset;
-        //     pk = pk.max(s.data.len() + f);
-        //     p.resize(p.len().max(pk + 1), 0);
-        //     for (i, d) in s.data.into_iter().enumerate() {
-        //         p[i + f] = d;
-        //     }
-        // }
-        let mut import = None;
+        let mut import_mod = None;
         for imp in opts.module.imports.iter() {
             if imp.kind == ImportKind::Memory(me) {
-                import = Some((imp.module.clone(), imp.name.clone()));
+                import_mod = Some((imp.module.clone(), imp.name.clone()));
             }
         }
         let n = Ident::new(&me.to_string(), Span::call_site());
-        match import {
+        match import_mod {
             None => {
                 let mut t = quote! {
                     Vec<u8>
                 };
                 if d.shared {
                     t = quasiquote! {
-                        #{opts.old_alloc()}::sync::Arc<#root::Mutex<#t>>
+                        #{alloc(&opts)}::sync::Arc<#root::Mutex<#t>>
                     };
                 };
                 z.push(quote! {
@@ -1499,22 +1412,13 @@ pub(crate) fn go(
                 });
             }
             Some((a, b)) => {
-                // if a == "!!unsafe" && b == "host" && opts.flags.contains(Flags::HOST_MEMORY) {
-                // } else if (a == "wasi_snapshot_preview1" || a == "wasix_32v1")
-                //     && b == "memory"
-                //     && opts.flags.contains(Flags::WASIX)
-                // {
-                // }else
                 if opts.core.plugins.iter().any(|p| {
                     p.mem_import(&opts.core, &a, &b)
                         .ok()
                         .and_then(|a| a)
                         .is_some()
                 }) {
-                    // } else if a.starts_with("pit") && opts.flags.contains(Flags::PIT) {
                 } else {
-                    // let a = bindname(&a);
-                    // let b = bindname(&b);
                     let m = Ident::new(&format!("{a}_{b}"), Span::call_site());
                     let mut p = if opts.core.flags.contains(Flags::LEGACY) {
                         quote! {dyn #root::Memory + 'a}
@@ -1525,7 +1429,7 @@ pub(crate) fn go(
                     };
                     if d.shared {
                         p = quasiquote! {
-                            #{opts.old_alloc()}::sync::Arc<#root::Mutex<#p>>
+                            #{alloc(&opts)}::sync::Arc<#root::Mutex<#p>>
                         };
                     };
                     fs.push(quote! {
@@ -1550,15 +1454,6 @@ pub(crate) fn go(
                 let pk = o + d.len();
                 let pk = pk + 1;
                 let o = o as u64;
-                // let mut out = out_dir();
-                // let mut h = ::sha3::Sha3_256::new();
-                // h.update(&p);
-                // let h = h.finalize();
-                // let h = format!("{:x}.segment", h);
-                // out.push(h);
-                // std::fs::write(out.clone(), p)?;
-                // let out_str = out.to_str().unwrap().to_owned();
-                // eprintln!("emuitting data");
                 init.push(quote! {
                     ctx.#n().write(#o,&[#(#d),*])?
                 });
@@ -1575,12 +1470,14 @@ pub(crate) fn go(
         match &xp.kind {
             ExportKind::Func(f) => {
                 let f = *f;
-                let d = opts.old_render_export(
+                let d = render_export(
+                    &opts,
                     format_ident!("{}", xp.name),
-                    opts.old_fname(f),
+                    fname(&opts, f),
                     &opts.module.signatures[opts.module.funcs[f].sig()],
                 );
-                let e = opts.old_render_self_sig_import(
+                let e = render_self_sig_import(
+                    &opts,
                     format_ident!("{}", xp.name),
                     &opts.module.signatures[opts.module.funcs[f].sig()],
                 );
@@ -1593,11 +1490,11 @@ pub(crate) fn go(
             }
             ExportKind::Table(t) => {
                 let d = &opts.module.tables[*t];
-                let tt = opts.old_render_ty(&quote! {Self}, d.ty);
+                let tt = render_ty(&opts, &quote! {Self}, d.ty);
                 let x = Ident::new(&t.to_string(), Span::call_site());
                 let mn = Ident::new(&xp.name, Span::call_site());
                 let i = quote! {
-                    fn #mn(&mut self) -> &mut #{opts.old_alloc()}::vec::Vec<#tt>{
+                    fn #mn(&mut self) -> &mut #{alloc(&opts)}::vec::Vec<#tt>{
                         return &mut self.z().#x;
                     }
                 };
@@ -1605,7 +1502,7 @@ pub(crate) fn go(
             }
             ExportKind::Global(g) => {
                 let d = &opts.module.globals[*g];
-                let t = opts.old_render_ty(&quote! {Self}, d.ty);
+                let t = render_ty(&opts, &quote! {Self}, d.ty);
                 let x = Ident::new(&g.to_string(), Span::call_site());
                 let mn = Ident::new(&xp.name, Span::call_site());
                 let i = quote! {
@@ -1629,7 +1526,7 @@ pub(crate) fn go(
                         };
                         if opts.module.memories[*m].shared{
                             p = quasiquote!{
-                                #{opts.old_alloc()}::sync::Arc<#root::Mutex<#p>>
+                                #{alloc(&opts)}::sync::Arc<#root::Mutex<#p>>
                             };
                         };
                         p
@@ -1643,29 +1540,6 @@ pub(crate) fn go(
         }
     }
     for i in opts.module.imports.iter() {
-        // if i.module.starts_with(INTRINSIC) {
-        //     continue;
-        // }
-        // if opts.flags.contains(Flags::WASIX) {
-        //     if i.module == "wasi_snapshot_preview1" || i.module == "wasix_32v1" {
-        //         continue;
-        //     }
-        // }
-        // if opts.flags.contains(Flags::BIND) {
-        //     if i.module == "wars/bind" {
-        //         continue;
-        //     }
-        // }
-        // // if opts.flags.contains(Flags::PIT) {
-        // //     if i.module.starts_with("pit") {
-        // //         continue;
-        // //     }
-        // // }
-        // if opts.flags.contains(Flags::HOST_MEMORY){
-        //     if i.module.starts_with("!!unsafe"){
-        //         continue;
-        //     }
-        // }
         if let ImportKind::Func(f) = &i.kind {
             for plugin in opts.core.plugins.iter() {
                 if plugin
@@ -1686,33 +1560,13 @@ pub(crate) fn go(
                 }
             }
             let name = format_ident!("{}_{}", bindname(&i.module), bindname(&i.name));
-            fs.push(opts.old_render_self_sig_import(
+            fs.push(render_self_sig_import(
+                &opts,
                 name,
                 &opts.module.signatures[opts.module.funcs[*f].sig()],
             ));
         }
     }
-    // if opts.flags.contains(Flags::UNSANDBOXED) {
-    //     for (x, y) in [
-    //         (
-    //             format_ident!("files"),
-    //             quote! {
-    //                 ::std::collections::BTreeMap<u32,::std::sync::Arc<::std::fs::File>>
-    //             },
-    //         ),
-    //         (
-    //             format_ident!("io_errors"),
-    //             quote! {
-    //                 ::std::collections::BTreeMap<u32,::std::sync::Arc<::std::io::Error>>
-    //             },
-    //         ),
-    //     ] {
-    //         fields.push(x.clone());
-    //         z.push(quote! {
-    //             #x: #y
-    //         })
-    //     }
-    // }
     let defaults = fields.iter().map(|a| {
         quote! {
             #a: Default::default()
@@ -1726,7 +1580,7 @@ pub(crate) fn go(
     Ok(quasiquote! {
         // mod #internal_path{
             // extern crate alloc;
-            // pub(crate) fn old_alloc<T>(m: &mut  #{opts.old_alloc()}::collections::BTreeMap<u32,T>, x: T) -> u32{
+            // pub(crate) fn old_alloc<T>(m: &mut  #{alloc(&opts)}::collections::BTreeMap<u32,T>, x: T) -> u32{
             //     let mut u = 0;
             //     while m.contains_key(&u){
             //         u += 1;
@@ -1738,24 +1592,24 @@ pub(crate) fn go(
                 #(#z),*
             }
             impl<Target: #name + ?Sized> #root::Traverse<Target> for #data<Target>{
-                fn traverse<'a>(&'a self) ->#{opts.old_alloc()}::boxed::Box<dyn Iterator<Item = &'a Target::ExternRef> + 'a>{
+                fn traverse<'a>(&'a self) ->#{alloc(&opts)}::boxed::Box<dyn Iterator<Item = &'a Target::ExternRef> + 'a>{
                     return #{
                         let x = sfields.iter().map(|a|quote!{#root::Traverse::<Target>::traverse(&self.#a)});
                         quasiquote!{
-                            #{opts.old_alloc()}::boxed::Box::new(::core::iter::empty()#(.chain(#x))*)
+                            #{alloc(&opts)}::boxed::Box::new(::core::iter::empty()#(.chain(#x))*)
                         }
                     }
                 }
-                fn traverse_mut<'a>(&'a mut self) -> #{opts.old_alloc()}::boxed::Box<dyn Iterator<Item = &'a mut Target::ExternRef> + 'a>{
+                fn traverse_mut<'a>(&'a mut self) -> #{alloc(&opts)}::boxed::Box<dyn Iterator<Item = &'a mut Target::ExternRef> + 'a>{
                     return #{
                         let x = sfields.iter().map(|a|quote!{#root::Traverse::<Target>::traverse_mut(&mut self.#a)});
                         quasiquote!{
-                            #{opts.old_alloc()}::boxed::Box::new(::core::iter::empty()#(.chain(#x))*)
+                            #{alloc(&opts)}::boxed::Box::new(::core::iter::empty()#(.chain(#x))*)
                         }
                     }
                 }
             }
-            pub trait #name: #{opts.old_fp()}::CtxSpec<ExternRef = Self::_ExternRef> #{if opts.core.flags.contains(Flags::ASYNC){
+            pub trait #name: #{fp(&opts)}::CtxSpec<ExternRef = Self::_ExternRef> #{if opts.core.flags.contains(Flags::ASYNC){
                 quote! {+ Send + Sync}
             }else{
                 quote! {}
@@ -1802,10 +1656,6 @@ pub(crate) fn go(
                 }
                 #(#funcs)*
             };
-            // pub(crate) struct Shim<T: #name + ?Sized>{
-            //     pub(crate) wrapped: *mut T,
-            //     pub(crate) x: #{opts.old_fp()}::Value<T>,
-            // }
             impl<Target: #name + ?Sized> Default for #data<Target>{
                 fn default() -> Self{
                     Self{
