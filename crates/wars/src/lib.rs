@@ -52,6 +52,7 @@ bitflags::bitflags! {
         const NEW_ABI = 0x100;
     }
 }
+#[cfg(feature = "waffle")]
 pub(crate) mod unswitch;
 // pub(crate) mod wasix;
 pub trait Backend{
@@ -86,7 +87,9 @@ impl<'a> OptsCore<'a> {
 }
 pub type Opts<B,K> = OptsLt<'static, B, K>;
 #[derive(Clone)]
+#[cfg(feature = "waffle")]
 pub struct LegacyPortalWaffleBackend;
+#[cfg(feature = "waffle")]
 impl Backend for LegacyPortalWaffleBackend {}
 #[derive(Clone)]
 pub struct WasmparserBackend;
@@ -95,5 +98,6 @@ impl Backend for WasmparserBackend {}
 //     fn import(&self, module: &str, name: &str) -> TokenStream;
 // }
 pub(crate) const INTRINSIC: &'static str = "wars_intrinsic/";
+#[cfg(feature = "waffle")]
 pub(crate) mod r#impl;
 pub(crate) mod new_backend;
