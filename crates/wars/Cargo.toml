@@ -11,6 +11,7 @@ bitflags = "2.5.0"
 hex = "0.4.3"
 
 waffle={workspace = true,optional = true}
+wasmparser={workspace = true,optional = true}
 proc-macro2 = "1.0.85"
 quasiquote = "0.1.1"
 quote = "1.0.36"
@@ -25,3 +26,4 @@ waffle-passes-shared={workspace = true,optional = true}
 
 [features]
 waffle = ["dep:waffle","dep:waffle-passes-shared","dep:waffle-func-reloop"]
+wasmparser = ["dep:wasmparser"]

@@ -100,4 +100,7 @@ impl Backend for WasmparserBackend {}
 pub(crate) const INTRINSIC: &'static str = "wars_intrinsic/";
 #[cfg(feature = "waffle")]
 pub(crate) mod r#impl;
+#[cfg(feature = "wasmparser")]
 pub(crate) mod new_backend;
+#[cfg(feature = "wasmparser")]
+pub(crate) mod shared;
