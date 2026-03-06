@@ -611,15 +611,15 @@ fn emit(core: &OptsCore<'_>, m: &ParsedModule) -> anyhow::Result<TokenStream> {
         let min_bytes = d.initial * 65536;
         let min_bytes = min_bytes as u64;
         init_stmts.push(quote! {
-            let l = #min_bytes.max(ctx.#n().size().?);
-            let s = ctx.#n().size().?;
-            ctx.#n().grow(l - s).?;
+            let l = #min_bytes.max(ctx.#n().size()?);
+            let s = ctx.#n().size()?;
+            ctx.#n().grow(l - s)?;
         });
         for ds in m.data_segs.iter().filter(|ds| ds.memory_idx == me_idx_u) {
             for (i, chunk) in ds.bytes.chunks(65536).enumerate() {
                 let off = ds.offset + (i * 65536) as u64;
                 init_stmts.push(quote! {
-                    ctx.#n().write(#off, &[#(#chunk),*]).?;
+                    ctx.#n().write(#off, &[#(#chunk),*])?;
                 });
             }
         }
@@ -778,13 +778,13 @@ fn render_fun_ref(core: &OptsCore<'_>, m: &ParsedModule, func_idx: u32) -> Token
     if core.flags.contains(Flags::ASYNC) {
         quote! {
             #fp_ts::da::<#generics, C, _>(|ctx, arg| {
-                #root::func::unsync::AsyncRec::wrap(#fname(ctx, arg).)
+                #root::func::unsync::AsyncRec::wrap(#fname(ctx, arg))
             })
         }
     } else {
         quote! {
             #fp_ts::da::<#generics, C, _>(|ctx, arg| match #fname(ctx, arg) {
-                res => res.
+                res => res
             })
         }
     }
@@ -817,10 +817,10 @@ fn render_fn(core: &OptsCore<'_>, m: &ParsedModule, func_idx: u32) -> anyhow::Re
         let body = if let Some(ts) = plugin_result {
             if core.flags.contains(Flags::ASYNC) {
                 quote! {
-                    return #alloc_ts::boxed::Box::pin(async move { #ts. })
+                    return #alloc_ts::boxed::Box::pin(async move { #ts })
                 }
             } else {
-                quote! { return #ts.; }
+                quote! { return #ts; }
             }
         } else {
             let call = quote! {
@@ -829,7 +829,7 @@ fn render_fn(core: &OptsCore<'_>, m: &ParsedModule, func_idx: u32) -> anyhow::Re
             if core.flags.contains(Flags::ASYNC) {
                 quote! {
                     return #alloc_ts::boxed::Box::pin(async move {
-                        #call.go().await.
+                        #call.go().await
                     })
                 }
             } else {
@@ -1403,9 +1403,9 @@ fn process_op(ctx: &mut EmitCtx<'_>, op: Operator<'_>) -> anyhow::Result<()> {
             args.reverse();
             let fname = ctx.m.fname(function_index);
             let call = if ctx.core.flags.contains(Flags::ASYNC) {
-                quote! { #fname(ctx, #root::_rexport::tuple_list::tuple_list!(#(#fp_ts::cast::<_,_,C>(#args)),*)).await. }
+                quote! { #fname(ctx, #root::_rexport::tuple_list::tuple_list!(#(#fp_ts::cast::<_,_,C>(#args)),*)).await }
             } else {
-                quote! { #root::_rexport::tramp::tramp(#fname(ctx, #root::_rexport::tuple_list::tuple_list!(#(#fp_ts::cast::<_,_,C>(#args)),*))). }
+                quote! { #root::_rexport::tramp::tramp(#fname(ctx, #root::_rexport::tuple_list::tuple_list!(#(#fp_ts::cast::<_,_,C>(#args)),*))) }
             };
             if sig.returns.is_empty() {
                 ctx.emit(quote! {
