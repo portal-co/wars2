@@ -164,8 +164,8 @@ pub(crate) fn render_fn_sig<T: WasmTy>(
                 #root::_rexport::tuple_list::tuple_list!(#(#param_ids),*):
                     #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)
             ) -> impl #root::func::unsync::UnwrappedAsyncRec<'a,
-                    #root::_rexport::anyhow::Result<
-                        #root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)>>
+                    Result<
+                        #root::_rexport::tuple_list::tuple_list_type!(#(#returns),*), C::Error>>
         }
     } else {
         quote! {
@@ -174,8 +174,8 @@ pub(crate) fn render_fn_sig<T: WasmTy>(
                 #root::_rexport::tuple_list::tuple_list!(#(#param_ids),*):
                     #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)
             ) -> #root::_rexport::tramp::BorrowRec<'a,
-                    #root::_rexport::anyhow::Result<
-                        #root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)>>
+                    Result<
+                        #root::_rexport::tuple_list::tuple_list_type!(#(#returns),*), C::Error>>
         }
     };
     if let Some(t) = core.roots.get("tracing") {
@@ -212,8 +212,8 @@ pub(crate) fn render_export<T: WasmTy>(
                 #root::_rexport::tuple_list::tuple_list!(#(#param_ids),*):
                     #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)
             ) -> #root::func::unsync::AsyncRec<'a,
-                    #root::_rexport::anyhow::Result<
-                        #root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)>>
+                    Result<
+                        #root::_rexport::tuple_list::tuple_list_type!(#(#returns),*), Self::Error>>
             where Self: 'static {
                 return #root::func::unsync::AsyncRec::wrap(
                     #wrapped(self, #root::_rexport::tuple_list::tuple_list!(#(#param_ids),*))
@@ -227,8 +227,8 @@ pub(crate) fn render_export<T: WasmTy>(
                 #root::_rexport::tuple_list::tuple_list!(#(#param_ids),*):
                     #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)
             ) -> #root::_rexport::tramp::BorrowRec<'a,
-                    #root::_rexport::anyhow::Result<
-                        #root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)>>
+                    Result<
+                        #root::_rexport::tuple_list::tuple_list_type!(#(#returns),*), Self::Error>>
             where Self: 'static {
                 return #wrapped(self, #root::_rexport::tuple_list::tuple_list!(#(#param_ids),*));
             }
@@ -252,8 +252,8 @@ pub(crate) fn render_self_sig_import<T: WasmTy>(
                 self: &'a mut Self,
                 imp: #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)
             ) -> #root::func::unsync::AsyncRec<'a,
-                    #root::_rexport::anyhow::Result<
-                        #root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)>>
+                    Result<
+                        #root::_rexport::tuple_list::tuple_list_type!(#(#returns),*), Self::Error>>
             where Self: 'static;
         }
     } else {
@@ -262,8 +262,8 @@ pub(crate) fn render_self_sig_import<T: WasmTy>(
                 self: &'a mut Self,
                 imp: #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)
             ) -> #root::_rexport::tramp::BorrowRec<'a,
-                    #root::_rexport::anyhow::Result<
-                        #root::_rexport::tuple_list::tuple_list_type!(#(#returns),*)>>
+                    Result<
+                        #root::_rexport::tuple_list::tuple_list_type!(#(#returns),*), Self::Error>>
             where Self: 'static;
         }
     }

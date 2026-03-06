@@ -24,10 +24,10 @@ fn main() -> anyhow::Result<()> {
     functions.function(0); // 0: add
     functions.function(0); // 1: sub
     functions.function(0); // 2: calladd
-    functions.function(1); // 3: get_global
-    functions.function(2); // 4: set_global
-    functions.function(3); // 5: load_i32
-    functions.function(4); // 6: store_i32
+    functions.function(1); // 3: getglobal
+    functions.function(2); // 4: setglobal
+    functions.function(3); // 5: loadi32
+    functions.function(4); // 6: storei32
     module.section(&functions);
 
     let mut memories = MemorySection::new();
@@ -81,24 +81,24 @@ fn main() -> anyhow::Result<()> {
     f.instruction(&Instruction::Call(0));
     f.instruction(&Instruction::End);
     code.function(&f);
-    // get_global
+    // getglobal
     let mut f = Function::new([]);
     f.instruction(&Instruction::GlobalGet(0));
     f.instruction(&Instruction::End);
     code.function(&f);
-    // set_global
+    // setglobal
     let mut f = Function::new([]);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::GlobalSet(0));
     f.instruction(&Instruction::End);
     code.function(&f);
-    // load_i32
+    // loadi32
     let mut f = Function::new([]);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }));
     f.instruction(&Instruction::End);
     code.function(&f);
-    // store_i32
+    // storei32
     let mut f = Function::new([]);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::LocalGet(1));

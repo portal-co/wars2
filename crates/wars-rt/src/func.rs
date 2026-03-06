@@ -6,7 +6,6 @@ use core::{
 };
 // use std::vec::Vec;
 use alloc::{sync::Arc, vec, vec::Vec};
-use anyhow::Context;
 use tramp::{tramp, BorrowRec, Thunk};
 pub mod unsync;
 pub mod value;
@@ -21,7 +20,7 @@ pub struct BorrowForLt<C: CtxSpec> {
     ph: PhantomData<C>,
 }
 impl<'a, C: CtxSpec> ForLt<'a> for BorrowForLt<C> {
-    type ForLt = tramp::BorrowRec<'a, anyhow::Result<Vec<Value<C>>>>;
+    type ForLt = tramp::BorrowRec<'a, Result<Vec<Value<C>>, C::Error>>;
 }
 #[cfg(feature = "dumpster")]
 const _: () = {
@@ -46,7 +45,7 @@ pub fn call_ref<'a, A: CoeVec<C> + 'static, B: CoeVec<C> + 'static, C: CtxSpec +
     ctx: &'a mut C,
     go: Df<A, B, C>,
     a: A,
-) -> tramp::BorrowRec<'a, anyhow::Result<B>> {
+) -> tramp::BorrowRec<'a, Result<B, C::Error>> {
     // let go: Df<A, B, C> = cast(go);
     go(ctx, a)
 }
@@ -57,7 +56,7 @@ impl<C: CtxSpec> Clone for Value<C> {
 }
 pub trait Coe<C: CtxSpec>: Sized {
     fn coe(self) -> Value<C>;
-    fn uncoe(x: Value<C>) -> anyhow::Result<Self>;
+    fn uncoe(x: Value<C>) -> Result<Self, C::Error>;
 }
 pub fn cast<A: Coe<C> + 'static, B: Coe<C> + 'static, C: CtxSpec>(a: A) -> B {
     let a = match castaway::cast!(a, B) {
@@ -70,7 +69,7 @@ impl<C: CtxSpec> Coe<C> for Value<C> {
     fn coe(self) -> Value<C> {
         self
     }
-    fn uncoe(x: Value<C>) -> anyhow::Result<Self> {
+    fn uncoe(x: Value<C>) -> Result<Self, C::Error> {
         Ok(x)
     }
 }
@@ -81,7 +80,7 @@ impl<C: CtxSpec, D: Coe<C>> Coe<C> for Option<D> {
             Some(d) => d.coe(),
         }
     }
-    fn uncoe(x: Value<C>) -> anyhow::Result<Self> {
+    fn uncoe(x: Value<C>) -> Result<Self, C::Error> {
         if let value::Value::Null = &x.0 {
             return Ok(None);
         }
@@ -94,10 +93,11 @@ macro_rules! coe_impl_prim {
             fn coe(self) -> Value<C> {
                 Value(value::Value::$b(self))
             }
-            fn uncoe(x: Value<C>) -> anyhow::Result<Self> {
+            fn uncoe(x: Value<C>) -> Result<Self, C::Error> {
                 match x.0 {
                     value::Value::$b(a) => Ok(a),
-                    _ => anyhow::bail!("invalid type"),
+                    // _ => Err(anyhow::Error::msg("invalid type").into()),
+                    _ => todo!()
                 }
             }
         }
@@ -110,13 +110,13 @@ coe_impl_prim!(f64 in F64);
 #[cfg(feature = "dumpster")]
 pub trait CoeField<C: CtxSpec>: Sized {
     fn coe(self) -> crate::gc::Field<Value<C>>;
-    fn uncoe(x: crate::gc::Field<Value<C>>) -> anyhow::Result<Self>;
+    fn uncoe(x: crate::gc::Field<Value<C>>) -> Result<Self, C::Error>;
 }
 #[cfg(feature = "dumpster")]
 pub trait CoeFieldVec<C: CtxSpec>: Sized {
     const NUM: usize;
     fn coe(self) -> Vec<crate::gc::Field<Value<C>>>;
-    fn uncoe(a: Vec<crate::gc::Field<Value<C>>>) -> anyhow::Result<Self>;
+    fn uncoe(a: Vec<crate::gc::Field<Value<C>>>) -> Result<Self, C::Error>;
 }
 #[cfg(feature = "dumpster")]
 const _: () = {
@@ -126,7 +126,7 @@ const _: () = {
         fn coe(self) -> crate::gc::Field<Value<C>> {
             crate::gc::Field::Const(self.0.coe())
         }
-        fn uncoe(x: crate::gc::Field<Value<C>>) -> anyhow::Result<Self> {
+        fn uncoe(x: crate::gc::Field<Value<C>>) -> Result<Self, C::Error> {
             V::uncoe(match x {
                 crate::gc::Field::Const(a) => a,
                 crate::gc::Field::Mut(arc) => arc.lock().unwrap().clone(),
@@ -138,7 +138,7 @@ const _: () = {
         fn coe(self) -> crate::gc::Field<Value<C>> {
             crate::gc::Field::Mut(Arc::new(Mutex::new(self.0.coe())))
         }
-        fn uncoe(x: crate::gc::Field<Value<C>>) -> anyhow::Result<Self> {
+        fn uncoe(x: crate::gc::Field<Value<C>>) -> Result<Self, C::Error> {
             V::uncoe(match x {
                 crate::gc::Field::Const(a) => a,
                 crate::gc::Field::Mut(arc) => arc.lock().unwrap().clone(),
@@ -150,7 +150,7 @@ const _: () = {
         fn coe(self) -> Vec<Field<Value<C>>> {
             vec![]
         }
-        fn uncoe(a: Vec<Field<Value<C>>>) -> anyhow::Result<Self> {
+        fn uncoe(a: Vec<Field<Value<C>>>) -> Result<Self, C::Error> {
             Ok(())
         }
         const NUM: usize = 0;
@@ -161,11 +161,11 @@ const _: () = {
             a.push(self.0.coe());
             return a;
         }
-        fn uncoe(mut a: Vec<Field<Value<C>>>) -> anyhow::Result<Self> {
+        fn uncoe(mut a: Vec<Field<Value<C>>>) -> Result<Self, C::Error> {
             let Some(x) = a.pop() else {
-                anyhow::bail!("list too small")
+                return Err(anyhow::Error::msg("list too small").into())
             };
-            let y = A::uncoe(x).context("invalid item (note coe lists are REVERSED)")?;
+            let y = A::uncoe(x).map_err(|e| e.into())?;
             let z = B::uncoe(a)?;
             Ok((y, z))
         }
@@ -182,14 +182,14 @@ const _: () = {
                 },
             )))
         }
-        fn uncoe(x: Value<C>) -> anyhow::Result<Self> {
+        fn uncoe(x: Value<C>) -> Result<Self, C::Error> {
             match x.0 {
                 value::Value::Gc(crate::gc::GcCore::Fields(f)) => V::uncoe(unsafe {
                     use core::mem::transmute;
                     transmute(f)
                 })
                 .map(Self),
-                _ => anyhow::bail!("nota gc"),
+                _ => Err(anyhow::Error::msg("nota gc").into()),
             }
         }
     }
@@ -197,13 +197,13 @@ const _: () = {
 pub trait CoeVec<C: CtxSpec>: Sized {
     const NUM: usize;
     fn coe(self) -> Vec<Value<C>>;
-    fn uncoe(a: Vec<Value<C>>) -> anyhow::Result<Self>;
+    fn uncoe(a: Vec<Value<C>>) -> Result<Self, C::Error>;
 }
 impl<C: CtxSpec> CoeVec<C> for () {
     fn coe(self) -> Vec<Value<C>> {
         vec![]
     }
-    fn uncoe(a: Vec<Value<C>>) -> anyhow::Result<Self> {
+    fn uncoe(a: Vec<Value<C>>) -> Result<Self, C::Error> {
         Ok(())
     }
     const NUM: usize = 0;
@@ -214,11 +214,12 @@ impl<C: CtxSpec, A: Coe<C>, B: CoeVec<C>> CoeVec<C> for (A, B) {
         a.push(self.0.coe());
         return a;
     }
-    fn uncoe(mut a: Vec<Value<C>>) -> anyhow::Result<Self> {
+    fn uncoe(mut a: Vec<Value<C>>) -> Result<Self, C::Error> {
         let Some(x) = a.pop() else {
-            anyhow::bail!("list too small")
+            // return Err(anyhow::Error::msg("list too small").into())
+            todo!()
         };
-        let y = A::uncoe(x).context("invalid item (note coe lists are REVERSED)")?;
+        let y = A::uncoe(x).map_err(|e| e.into())?;
         let z = B::uncoe(a)?;
         Ok((y, z))
     }
@@ -236,21 +237,21 @@ pub fn map_rec<'a, T: 'a, U>(
         })),
     }
 }
-pub trait Dx<'a, A, B, C: 'a>:
-    Fn(&'a mut C, A) -> tramp::BorrowRec<'a, anyhow::Result<B>> + Send + Sync + 'static
+pub trait Dx<'a, A, B, C: CtxSpec + 'a>:
+    Fn(&'a mut C, A) -> tramp::BorrowRec<'a, Result<B, C::Error>> + Send + Sync + 'static
 {
 }
 impl<
         'a,
         A,
         B,
-        C: 'a,
-        T: Fn(&'a mut C, A) -> tramp::BorrowRec<'a, anyhow::Result<B>> + Send + Sync + 'static,
+        C: CtxSpec + 'a,
+        T: Fn(&'a mut C, A) -> tramp::BorrowRec<'a, Result<B, C::Error>> + Send + Sync + 'static,
     > Dx<'a, A, B, C> for T
 {
 }
 pub type Df<A, B, C> = Arc<dyn for<'a> Dx<'a, A, B, C>>;
-pub fn da<A, B, C, F: for<'a> Dx<'a, A, B, C>>(f: F) -> Df<A, B, C> {
+pub fn da<A, B, C: CtxSpec, F: for<'a> Dx<'a, A, B, C>>(f: F) -> Df<A, B, C> {
     Arc::new(f)
 }
 impl<C: CtxSpec + 'static, A: CoeVec<C> + 'static, B: CoeVec<C> + 'static> Coe<C> for Df<A, B, C> {
@@ -260,7 +261,7 @@ impl<C: CtxSpec + 'static, A: CoeVec<C> + 'static, B: CoeVec<C> + 'static> Coe<C
             T: (for<'a> Fn(
                     &'a mut C,
                     Vec<value::Value<C, BorrowForLt<C>>>,
-                ) -> tramp::BorrowRec<'a, anyhow::Result<Vec<Value<C>>>>)
+                ) -> tramp::BorrowRec<'a, Result<Vec<Value<C>>, C::Error>>)
                 + Send
                 + Sync
                 + 'static,
@@ -280,9 +281,10 @@ impl<C: CtxSpec + 'static, A: CoeVec<C> + 'static, B: CoeVec<C> + 'static> Coe<C
             },
         ))))
     }
-    fn uncoe(x: Value<C>) -> anyhow::Result<Self> {
+    fn uncoe(x: Value<C>) -> Result<Self, C::Error> {
         let value::Value::FunRef(x) = x.0 else {
-            anyhow::bail!("invalid value")
+            // return Err(anyhow::Error::msg("invalid value").into())
+            todo!()
         };
         Ok(Arc::new(move |ctx, a| {
             let v = a.coe();
@@ -291,15 +293,15 @@ impl<C: CtxSpec + 'static, A: CoeVec<C> + 'static, B: CoeVec<C> + 'static> Coe<C
         }))
     }
 }
-pub trait Call<A, B, C>:
-    for<'a> Fn(&'a mut C, A) -> tramp::BorrowRec<'a, anyhow::Result<B>> + 'static
+pub trait Call<A, B, C: CtxSpec>:
+    for<'a> Fn(&'a mut C, A) -> tramp::BorrowRec<'a, Result<B, C::Error>> + 'static
 {
-    fn call(&self, c: &mut C, a: A) -> anyhow::Result<B>;
+    fn call(&self, c: &mut C, a: A) -> Result<B, C::Error>;
 }
-impl<A, B, C, T: for<'a> Fn(&'a mut C, A) -> tramp::BorrowRec<'a, anyhow::Result<B>> + 'static>
+impl<A, B, C: CtxSpec, T: for<'a> Fn(&'a mut C, A) -> tramp::BorrowRec<'a, Result<B, C::Error>> + 'static>
     Call<A, B, C> for T
 {
-    fn call(&self, c: &mut C, a: A) -> anyhow::Result<B> {
+    fn call(&self, c: &mut C, a: A) -> Result<B, C::Error> {
         tramp((self)(c, a))
     }
 }

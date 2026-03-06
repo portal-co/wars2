@@ -72,3 +72,5 @@ impl<C: CtxSpec,R: for<'a>ForLt<'a>> Clone for Value<C,R> {
         }
     }
 }
+unsafe impl<C: CtxSpec, R: for<'a> ForLt<'a>> Send for Value<C, R> where C::ExternRef: Send {}
+unsafe impl<C: CtxSpec, R: for<'a> ForLt<'a>> Sync for Value<C, R> where C::ExternRef: Sync {}

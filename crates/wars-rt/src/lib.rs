@@ -7,13 +7,15 @@ pub mod wasix;
 #[cfg(feature = "dumpster")]
 pub mod gc;
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
-use core::iter::empty;
+use core::{error::Error, iter::empty};
 #[cfg(feature = "std")]
 pub use std::sync::Mutex;
 #[cfg(not(feature = "std"))]
 pub use spin::Mutex;
+
 pub trait Err: Into<anyhow::Error> {}
 impl<T: Into<anyhow::Error>> Err for T {}
+
 #[cfg(feature = "std")]
 extern crate std;
 #[derive(Clone)]
@@ -24,9 +26,12 @@ pub enum Pit<X, H> {
 // use as_ref::AsSlice;
 // use func::CtxSpec;
 pub use func::Value;
+
 pub trait CtxSpec: Sized {
     type ExternRef: Clone;
+    type Error: Error + 'static;
 }
+
 pub trait Traverse<C: CtxSpec> {
     fn traverse<'a>(&'a self) -> Box<dyn Iterator<Item = &'a C::ExternRef> + 'a>;
     fn traverse_mut<'a>(&'a mut self) -> Box<dyn Iterator<Item = &'a mut C::ExternRef> + 'a>;
@@ -61,18 +66,18 @@ impl<C: CtxSpec> Traverse<C> for u64 {
         Box::new(empty())
     }
 }
-pub trait Memory {
-    fn read<'a>(&'a self, a: u64, s: u64) -> anyhow::Result<Box<dyn AsRef<[u8]> + 'a>>;
-    fn write(&mut self, a: u64, x: &[u8]) -> anyhow::Result<()>;
-    fn size(&self) -> anyhow::Result<u64>;
-    fn grow(&mut self, x: u64) -> anyhow::Result<()>;
+pub trait Memory<E> {
+    fn read<'a>(&'a self, a: u64, s: u64) -> Result<Box<dyn AsRef<[u8]> + 'a>, E>;
+    fn write(&mut self, a: u64, x: &[u8]) -> Result<(), E>;
+    fn size(&self) -> Result<u64, E>;
+    fn grow(&mut self, x: u64) -> Result<(), E>;
 }
 #[cfg(feature = "ic-stable-structures")]
 pub mod ic {
     use alloc::{boxed::Box, vec};
     #[repr(transparent)]
     pub struct Stable<T>(pub T);
-    impl<T: ic_stable_structures::Memory> super::Memory for Stable<T> {
+    impl<T: ic_stable_structures::Memory> super::Memory<anyhow::Error> for Stable<T> {
         fn read<'a>(&'a self, a: u64, s: u64) -> anyhow::Result<Box<dyn AsRef<[u8]> + 'a>> {
             let mut v = vec![0u8; s as usize];
             self.0.read(a, &mut v);
@@ -94,7 +99,7 @@ pub mod ic {
         }
     }
 }
-impl Memory for Vec<u8> {
+impl Memory<anyhow::Error> for Vec<u8> {
     fn read<'a>(&'a self, a: u64, s: u64) -> anyhow::Result<Box<dyn AsRef<[u8]> + 'a>> {
         Ok(Box::new(&self[(a as usize)..][..(s as usize)]))
     }
@@ -106,26 +111,26 @@ impl Memory for Vec<u8> {
         Ok(self.len() as u64)
     }
     fn grow(&mut self, x: u64) -> anyhow::Result<()> {
-        self.extend((0..x).map(|a| 0u8));
+        self.extend((0..x).map(|_a| 0u8));
         Ok(())
     }
 }
-impl<T: Memory + ?Sized> Memory for Box<T> {
-    fn read<'a>(&'a self, a: u64, s: u64) -> anyhow::Result<Box<dyn AsRef<[u8]> + 'a>> {
+impl<T: Memory<E> + ?Sized, E> Memory<E> for Box<T> {
+    fn read<'a>(&'a self, a: u64, s: u64) -> Result<Box<dyn AsRef<[u8]> + 'a>, E> {
         self.as_ref().read(a, s)
     }
-    fn write(&mut self, a: u64, x: &[u8]) -> anyhow::Result<()> {
+    fn write(&mut self, a: u64, x: &[u8]) -> Result<(), E> {
         self.as_mut().write(a, x)
     }
-    fn size(&self) -> Result<u64, anyhow::Error> {
+    fn size(&self) -> Result<u64, E> {
         self.as_ref().size()
     }
-    fn grow(&mut self, x: u64) -> anyhow::Result<()> {
+    fn grow(&mut self, x: u64) -> Result<(), E> {
         self.as_mut().grow(x)
     }
 }
 #[cfg(feature = "std")]
-impl<T: Memory> Memory for Arc<std::sync::Mutex<T>> {
+impl<T: Memory<anyhow::Error>> Memory<anyhow::Error> for Arc<std::sync::Mutex<T>> {
     fn read<'a>(&'a self, a: u64, s: u64) -> anyhow::Result<Box<dyn AsRef<[u8]> + 'a>> {
         let l = self.lock().unwrap();
         let r = l.read(a, s)?;
@@ -135,7 +140,7 @@ impl<T: Memory> Memory for Arc<std::sync::Mutex<T>> {
         let mut l = self.lock().unwrap();
         return l.write(a, x);
     }
-    fn size(&self) -> Result<u64, anyhow::Error> {
+    fn size(&self) -> anyhow::Result<u64> {
         let l = self.lock().unwrap();
         return l.size();
     }
@@ -145,7 +150,7 @@ impl<T: Memory> Memory for Arc<std::sync::Mutex<T>> {
     }
 }
 #[cfg(not(feature = "std"))]
-impl<T: Memory> Memory for Arc<spin::Mutex<T>> {
+impl<T: Memory<anyhow::Error>> Memory<anyhow::Error> for Arc<spin::Mutex<T>> {
     fn read<'a>(&'a self, a: u64, s: u64) -> anyhow::Result<Box<dyn AsRef<[u8]> + 'a>> {
         let l = self.lock();
         let r = l.read(a, s)?;
@@ -155,7 +160,7 @@ impl<T: Memory> Memory for Arc<spin::Mutex<T>> {
         let mut l = self.lock();
         return l.write(a, x);
     }
-    fn size(&self) -> Result<u64, anyhow::Error> {
+    fn size(&self) -> anyhow::Result<u64> {
         let l = self.lock();
         return l.size();
     }
@@ -191,99 +196,100 @@ pub mod _rexport {
     pub use tramp;
     pub use tuple_list;
     pub extern crate alloc;
+    pub use core::error::Error;
 }
 macro_rules! int_ty{
     ($int:ty => $p:ident) => {
         paste::paste!{
-            pub fn [<$p add>](a: $int, b: $int) -> anyhow::Result<tuple_list::tuple_list_type!($int)> {
+            pub fn [<$p add>]<E>(a: $int, b: $int) -> Result<tuple_list::tuple_list_type!($int), E> {
                 Ok(tuple_list::tuple_list!(a.wrapping_add(b)))
             }
-            pub fn [<$p mul>](a: $int, b: $int) -> anyhow::Result<tuple_list::tuple_list_type!($int)> {
+            pub fn [<$p mul>]<E>(a: $int, b: $int) -> Result<tuple_list::tuple_list_type!($int), E> {
                 Ok(tuple_list::tuple_list!(a.wrapping_mul(b)))
             }
-            pub fn [<$p and>](a: $int, b: $int) -> anyhow::Result<tuple_list::tuple_list_type!($int)> {
+            pub fn [<$p and>]<E>(a: $int, b: $int) -> Result<tuple_list::tuple_list_type!($int), E> {
                 Ok(tuple_list::tuple_list!(a & b))
             }
-            pub fn [<$p or>](a: $int, b: $int) -> anyhow::Result<tuple_list::tuple_list_type!($int)> {
+            pub fn [<$p or>]<E>(a: $int, b: $int) -> Result<tuple_list::tuple_list_type!($int), E> {
                 Ok(tuple_list::tuple_list!(a | b))
             }
-            pub fn [<$p xor>](a: $int, b: $int) -> anyhow::Result<tuple_list::tuple_list_type!($int)> {
+            pub fn [<$p xor>]<E>(a: $int, b: $int) -> Result<tuple_list::tuple_list_type!($int), E> {
                 Ok(tuple_list::tuple_list!(a ^ b))
             }
-            pub fn [<$p shl>](a: $int, b: $int) -> anyhow::Result<tuple_list::tuple_list_type!($int)> {
+            pub fn [<$p shl>]<E>(a: $int, b: $int) -> Result<tuple_list::tuple_list_type!($int), E> {
                 Ok(tuple_list::tuple_list!(a << b))
             }
-            pub fn [<$p shru>](a: $int, b: $int) -> anyhow::Result<tuple_list::tuple_list_type!($int)> {
+            pub fn [<$p shru>]<E>(a: $int, b: $int) -> Result<tuple_list::tuple_list_type!($int), E> {
                 Ok(tuple_list::tuple_list!(a >> b))
             }
-            pub fn [<$p shrs>](a: $int, b: $int) -> anyhow::Result<tuple_list::tuple_list_type!($int)> {
+            pub fn [<$p shrs>]<E>(a: $int, b: $int) -> Result<tuple_list::tuple_list_type!($int), E> {
                 Ok(tuple_list::tuple_list!(((a as $p) >> b) as $int))
             }
-            pub fn [<$p divu>](a: $int, b: $int) -> anyhow::Result<tuple_list::tuple_list_type!($int)> {
+            pub fn [<$p divu>]<E>(a: $int, b: $int) -> Result<tuple_list::tuple_list_type!($int), E> {
                 Ok(tuple_list::tuple_list!(a / b))
             }
-            pub fn [<$p divs>](a: $int, b: $int) -> anyhow::Result<tuple_list::tuple_list_type!($int)> {
+            pub fn [<$p divs>]<E>(a: $int, b: $int) -> Result<tuple_list::tuple_list_type!($int), E> {
                 Ok(tuple_list::tuple_list!(((a as $p) / (b as $p)) as $int))
             }
-            pub fn [<$p remu>](a: $int, b: $int) -> anyhow::Result<tuple_list::tuple_list_type!($int)> {
+            pub fn [<$p remu>]<E>(a: $int, b: $int) -> Result<tuple_list::tuple_list_type!($int), E> {
                 Ok(tuple_list::tuple_list!(a % b))
             }
-            pub fn [<$p rems>](a: $int, b: $int) -> anyhow::Result<tuple_list::tuple_list_type!($int)> {
+            pub fn [<$p rems>]<E>(a: $int, b: $int) -> Result<tuple_list::tuple_list_type!($int), E> {
                 Ok(tuple_list::tuple_list!(((a as $p) % (b as $p)) as $int))
             }
-            pub fn [<$p rotl>](a: $int, b: $int) -> anyhow::Result<tuple_list::tuple_list_type!($int)> {
+            pub fn [<$p rotl>]<E>(a: $int, b: $int) -> Result<tuple_list::tuple_list_type!($int), E> {
                 Ok(tuple_list::tuple_list!(a.rotate_left((b & 0xffffffff) as u32)))
             }
-            pub fn [<$p clz>](a: $int) -> anyhow::Result<tuple_list::tuple_list_type!($int)> {
+            pub fn [<$p clz>]<E>(a: $int) -> Result<tuple_list::tuple_list_type!($int), E> {
                 Ok(tuple_list::tuple_list!(a.leading_zeros() as $int))
             }
-            pub fn [<$p ctz>](a: $int) -> anyhow::Result<tuple_list::tuple_list_type!($int)> {
+            pub fn [<$p ctz>]<E>(a: $int) -> Result<tuple_list::tuple_list_type!($int), E> {
                 Ok(tuple_list::tuple_list!(a.trailing_zeros() as $int))
             }
             //comparisons
-            pub fn [<$p eqz>](a: $int) -> anyhow::Result<tuple_list::tuple_list_type!(u32)> {
+            pub fn [<$p eqz>]<E>(a: $int) -> Result<tuple_list::tuple_list_type!(u32), E> {
                 Ok(tuple_list::tuple_list!(if a == 0{
                     1
                 }else{
                     0
                 }))
             }
-            pub fn [<$p eq>](a: $int, b: $int) -> anyhow::Result<tuple_list::tuple_list_type!(u32)> {
+            pub fn [<$p eq>]<E>(a: $int, b: $int) -> Result<tuple_list::tuple_list_type!(u32), E> {
                 Ok(tuple_list::tuple_list!(if a == b{
                     1
                 }else{
                     0
                 }))
             }
-            pub fn [<$p ne>](a: $int, b: $int) -> anyhow::Result<tuple_list::tuple_list_type!(u32)> {
+            pub fn [<$p ne>]<E>(a: $int, b: $int) -> Result<tuple_list::tuple_list_type!(u32), E> {
                 Ok(tuple_list::tuple_list!(if a != b{
                     1
                 }else{
                     0
                 }))
             }
-            pub fn [<$p ltu>](a: $int, b: $int) -> anyhow::Result<tuple_list::tuple_list_type!(u32)> {
+            pub fn [<$p ltu>]<E>(a: $int, b: $int) -> Result<tuple_list::tuple_list_type!(u32), E> {
                 Ok(tuple_list::tuple_list!(if a < b{
                     1
                 }else{
                     0
                 }))
             }
-            pub fn [<$p gtu>](a: $int, b: $int) -> anyhow::Result<tuple_list::tuple_list_type!(u32)> {
+            pub fn [<$p gtu>]<E>(a: $int, b: $int) -> Result<tuple_list::tuple_list_type!(u32), E> {
                 Ok(tuple_list::tuple_list!(if a > b{
                     1
                 }else{
                     0
                 }))
             }
-            pub fn [<$p leu>](a: $int, b: $int) -> anyhow::Result<tuple_list::tuple_list_type!(u32)> {
+            pub fn [<$p leu>]<E>(a: $int, b: $int) -> Result<tuple_list::tuple_list_type!(u32), E> {
                 Ok(tuple_list::tuple_list!(if a <= b{
                     1
                 }else{
                     0
                 }))
             }
-            pub fn [<$p geu>](a: $int, b: $int) -> anyhow::Result<tuple_list::tuple_list_type!(u32)> {
+            pub fn [<$p geu>]<E>(a: $int, b: $int) -> Result<tuple_list::tuple_list_type!(u32), E> {
                 Ok(tuple_list::tuple_list!(if a >= b{
                     1
                 }else{
@@ -291,7 +297,7 @@ macro_rules! int_ty{
                 }))
             }
             //signed
-            pub fn [<$p lts>](a: $int, b: $int) -> anyhow::Result<tuple_list::tuple_list_type!(u32)> {
+            pub fn [<$p lts>]<E>(a: $int, b: $int) -> Result<tuple_list::tuple_list_type!(u32), E> {
                 let a = a as $p;
                 let b = b as $p;
                 Ok(tuple_list::tuple_list!(if a < b{
@@ -300,7 +306,7 @@ macro_rules! int_ty{
                     0
                 }))
             }
-            pub fn [<$p gts>](a: $int, b: $int) -> anyhow::Result<tuple_list::tuple_list_type!(u32)> {
+            pub fn [<$p gts>]<E>(a: $int, b: $int) -> Result<tuple_list::tuple_list_type!(u32), E> {
                 let a = a as $p;
                 let b = b as $p;
                 Ok(tuple_list::tuple_list!(if a > b{
@@ -309,7 +315,7 @@ macro_rules! int_ty{
                     0
                 }))
             }
-            pub fn [<$p les>](a: $int, b: $int) -> anyhow::Result<tuple_list::tuple_list_type!(u32)> {
+            pub fn [<$p les>]<E>(a: $int, b: $int) -> Result<tuple_list::tuple_list_type!(u32), E> {
                 let a = a as $p;
                 let b = b as $p;
                 Ok(tuple_list::tuple_list!(if a <= b{
@@ -318,7 +324,7 @@ macro_rules! int_ty{
                     0
                 }))
             }
-            pub fn [<$p ges>](a: $int, b: $int) -> anyhow::Result<tuple_list::tuple_list_type!(u32)> {
+            pub fn [<$p ges>]<E>(a: $int, b: $int) -> Result<tuple_list::tuple_list_type!(u32), E> {
                 let a = a as $p;
                 let b = b as $p;
                 Ok(tuple_list::tuple_list!(if a >= b{
@@ -327,65 +333,59 @@ macro_rules! int_ty{
                     0
                 }))
             }
-            pub fn [<$p sub>](a: $int, b: $int) -> anyhow::Result<tuple_list::tuple_list_type!($int)> {
+            pub fn [<$p sub>]<E>(a: $int, b: $int) -> Result<tuple_list::tuple_list_type!($int), E> {
                 Ok(tuple_list::tuple_list!(a.wrapping_sub(b)))
             }
             //LOADS and STORES
-            pub fn [<$p load>]<T: TryInto<u64>,M: Memory + ?Sized>(a: &mut M, b: T) -> anyhow::Result<tuple_list::tuple_list_type!($int)> where T::Error: Err + Send + Sync + 'static{
-                let r = a.read(b.try_into().map_err(Into::into)?,core::mem::size_of::<$int>().try_into().unwrap())?;
+            pub fn [<$p load>]<T: TryInto<u64>, M: Memory<E> + ?Sized,E>(a: &mut M, b: T) -> Result<tuple_list::tuple_list_type!($int), E> where T::Error: Into<anyhow::Error> + Send + Sync + 'static {
+                let r = a.read(b.try_into()/* .map_err(|e| E::from(e.into()))? */ .map_err(|_|()).expect("to work"), core::mem::size_of::<$int>().try_into().unwrap())?;
                 Ok(tuple_list::tuple_list!($int::from_ne_bytes(r.as_ref().as_ref().try_into().unwrap())))
             }
-            pub fn [<$p store>]<T: TryInto<u64>,M: Memory + ?Sized>(a: &mut M, b: T, c: $int) -> anyhow::Result<()> where T::Error: Err + Send + Sync + 'static{
-                // let mut r = &mut a[b.try_into().map_err(Into::into)?..][..std::mem::size_of::<$int>()];
-                // r.copy_from_slice(&c.to_ne_bytes());
-                a.write(b.try_into().map_err(Into::into)?,&c.to_ne_bytes())?;
+            pub fn [<$p store>]<T: TryInto<u64>, M: Memory<E> + ?Sized,E>(a: &mut M, b: T, c: $int) -> Result<(), E> where T::Error: Into<anyhow::Error> + Send + Sync + 'static {
+                a.write(b.try_into()/* .map_err(|e| E::from(e.into()))? */ .map_err(|_|()).expect("to work"), &c.to_ne_bytes())?;
                 Ok(())
             }
             //8 BIT
-            pub fn [<$p load8u>]<T: TryInto<u64>,M: Memory + ?Sized>(a: &mut M, b: T) -> anyhow::Result<tuple_list::tuple_list_type!($int)> where T::Error: Err + Send + Sync + 'static{
-                let r = a.read(b.try_into().map_err(Into::into)?,1)?.as_ref().as_ref()[0];
+            pub fn [<$p load8u>]<T: TryInto<u64>, M: Memory<E> + ?Sized,E>(a: &mut M, b: T) -> Result<tuple_list::tuple_list_type!($int), E> where T::Error: Into<anyhow::Error> + Send + Sync + 'static {
+                let r = a.read(b.try_into()/* .map_err(|e| E::from(e.into()))? */ .map_err(|_|()).expect("to work"), 1)?.as_ref().as_ref()[0];
                 Ok(tuple_list::tuple_list!(r as $int))
             }
-            pub fn [<$p load8s>]<T: TryInto<u64>,M: Memory + ?Sized>(a: &mut M, b: T) -> anyhow::Result<tuple_list::tuple_list_type!($int)> where T::Error: Err + Send + Sync + 'static{
-                let r = a.read(b.try_into().map_err(Into::into)?,1)?.as_ref().as_ref()[0];
+            pub fn [<$p load8s>]<T: TryInto<u64>, M: Memory<E> + ?Sized,E>(a: &mut M, b: T) -> Result<tuple_list::tuple_list_type!($int), E> where T::Error: Into<anyhow::Error> + Send + Sync + 'static {
+                let r = a.read(b.try_into()/* .map_err(|e| E::from(e.into()))? */ .map_err(|_|()).expect("to work"), 1)?.as_ref().as_ref()[0];
                 Ok(tuple_list::tuple_list!(r as i8 as $p as $int))
             }
-            pub fn [<$p store8>]<T: TryInto<u64>,M: Memory + ?Sized>(a: &mut M, b: T, c: $int) -> anyhow::Result<()> where T::Error: Err + Send + Sync + 'static{
-                // let mut r = &mut a[b.try_into().map_err(Into::into)?..][..1];
-                // r[0] = (c & 0xff) as u8;
-                a.write(b.try_into().map_err(Into::into)?,&[(c & 0xff) as u8])?;
+            pub fn [<$p store8>]<T: TryInto<u64>, M: Memory<E> + ?Sized,E>(a: &mut M, b: T, c: $int) -> Result<(), E> where T::Error: Into<anyhow::Error> + Send + Sync + 'static {
+                a.write(b.try_into()/* .map_err(|e| E::from(e.into()))? */ .map_err(|_|()).expect("to work"), &[(c & 0xff) as u8])?;
                 Ok(())
             }
             //16 BIT
-            pub fn [<$p load16u>]<T: TryInto<u64>,M: Memory + ?Sized>(a: &mut M, b: T) -> anyhow::Result<tuple_list::tuple_list_type!($int)> where T::Error: Err + Send + Sync + 'static{
-                let r = a.read(b.try_into().map_err(Into::into)?,2)?;
+            pub fn [<$p load16u>]<T: TryInto<u64>, M: Memory<E> + ?Sized,E>(a: &mut M, b: T) -> Result<tuple_list::tuple_list_type!($int), E> where T::Error: Into<anyhow::Error> + Send + Sync + 'static {
+                let r = a.read(b.try_into()/* .map_err(|e| E::from(e.into()))? */ .map_err(|_|()).expect("to work"), 2)?;
                 let r = u16::from_ne_bytes(r.as_ref().as_ref().try_into().unwrap());
                 Ok(tuple_list::tuple_list!(r as $int))
             }
-            pub fn [<$p load16s>]<T: TryInto<u64>,M: Memory + ?Sized>(a: &mut M, b: T) -> anyhow::Result<tuple_list::tuple_list_type!($int)> where T::Error: Err + Send + Sync + 'static{
-                let r = a.read(b.try_into().map_err(Into::into)?,2)?;
+            pub fn [<$p load16s>]<T: TryInto<u64>, M: Memory<E> + ?Sized,E>(a: &mut M, b: T) -> Result<tuple_list::tuple_list_type!($int), E> where T::Error: Into<anyhow::Error> + Send + Sync + 'static {
+                let r = a.read(b.try_into()/* .map_err(|e| E::from(e.into()))? */ .map_err(|_|()).expect("to work"), 2)?;
                 let r = u16::from_ne_bytes(r.as_ref().as_ref().try_into().unwrap());
                 Ok(tuple_list::tuple_list!(r as i16 as $p as $int))
             }
-            pub fn [<$p store16>]<T: TryInto<u64>,M: Memory + ?Sized>(a: &mut M, b: T, c: $int) -> anyhow::Result<()> where T::Error: Err + Send + Sync + 'static{
-                // let mut r = &mut a[b.try_into().map_err(Into::into)?..][..2];
-                a.write(b.try_into().map_err(Into::into)?,&((c & 0xffff) as u16).to_ne_bytes())?;
+            pub fn [<$p store16>]<T: TryInto<u64>, M: Memory<E> + ?Sized,E>(a: &mut M, b: T, c: $int) -> Result<(), E> where T::Error: Into<anyhow::Error> + Send + Sync + 'static {
+                a.write(b.try_into()/* .map_err(|e| E::from(e.into()))? */ .map_err(|_|()).expect("to work"), &((c & 0xffff) as u16).to_ne_bytes())?;
                 Ok(())
             }
             //32 BIT
-            pub fn [<$p load32u>]<T: TryInto<u64>,M: Memory + ?Sized>(a: &mut M, b: T) -> anyhow::Result<tuple_list::tuple_list_type!($int)> where T::Error: Err + Send + Sync + 'static{
-                let r = a.read(b.try_into().map_err(Into::into)?,4)?;
+            pub fn [<$p load32u>]<T: TryInto<u64>, M: Memory<E> + ?Sized,E>(a: &mut M, b: T) -> Result<tuple_list::tuple_list_type!($int), E> where T::Error: Into<anyhow::Error> + Send + Sync + 'static {
+                let r = a.read(b.try_into()/* .map_err(|e| E::from(e.into()))? */ .map_err(|_|()).expect("to work"), 4)?;
                 let r = u32::from_ne_bytes(r.as_ref().as_ref().try_into().unwrap());
                 Ok(tuple_list::tuple_list!(r as $int))
             }
-            pub fn [<$p load32s>]<T: TryInto<u64>,M: Memory + ?Sized>(a: &mut M, b: T) -> anyhow::Result<tuple_list::tuple_list_type!($int)> where T::Error: Err + Send + Sync + 'static{
-                let r = a.read(b.try_into().map_err(Into::into)?,4)?;
+            pub fn [<$p load32s>]<T: TryInto<u64>, M: Memory<E> + ?Sized,E>(a: &mut M, b: T) -> Result<tuple_list::tuple_list_type!($int), E> where T::Error: Into<anyhow::Error> + Send + Sync + 'static {
+                let r = a.read(b.try_into()/* .map_err(|e| E::from(e.into()))? */ .map_err(|_|()).expect("to work"), 4)?;
                 let r = u32::from_ne_bytes(r.as_ref().as_ref().try_into().unwrap());
                 Ok(tuple_list::tuple_list!(r as i32 as $p as $int))
             }
-            pub fn [<$p store32>]<T: TryInto<u64>,M: Memory + ?Sized>(a: &mut M, b: T, c: $int) -> anyhow::Result<()> where T::Error: Err + Send + Sync + 'static{
-                // let mut r = &mut a[b.try_into().map_err(Into::into)?..][..4];
-                a.write(b.try_into().map_err(Into::into)?,&((c & 0xffffffff) as u32).to_ne_bytes())?;
+            pub fn [<$p store32>]<T: TryInto<u64>, M: Memory<E> + ?Sized,E>(a: &mut M, b: T, c: $int) -> Result<(), E> where T::Error: Into<anyhow::Error> + Send + Sync + 'static {
+                a.write(b.try_into()/* .map_err(|e| E::from(e.into()))? */ .map_err(|_|()).expect("to work"), &((c & 0xffffffff) as u32).to_ne_bytes())?;
                 Ok(())
             }
         }
@@ -393,19 +393,19 @@ macro_rules! int_ty{
 }
 int_ty!(u32 => i32);
 int_ty!(u64 => i64);
-pub fn select<T>(u: u32, t: T, t2: T) -> anyhow::Result<tuple_list::tuple_list_type!(T)> {
+pub fn select<T,E>(u: u32, t: T, t2: T) -> Result<tuple_list::tuple_list_type!(T), E> {
     Ok(tuple_list::tuple_list!(if u != 0 { t } else { t2 }))
 }
-pub fn i32wrapi64(a: u64) -> anyhow::Result<tuple_list::tuple_list_type!(u32)> {
+pub fn i32wrapi64<E>(a: u64) -> Result<tuple_list::tuple_list_type!(u32), E> {
     return Ok(tuple_list::tuple_list!((a & 0xffffffff) as u32));
 }
-pub fn i64extendi32u(a: u32) -> anyhow::Result<tuple_list::tuple_list_type!(u64)> {
+pub fn i64extendi32u<E>(a: u32) -> Result<tuple_list::tuple_list_type!(u64), E> {
     Ok(tuple_list::tuple_list!(a as u64))
 }
-pub fn i64extendi32s(a: u32) -> anyhow::Result<tuple_list::tuple_list_type!(u64)> {
+pub fn i64extendi32s<E>(a: u32) -> Result<tuple_list::tuple_list_type!(u64), E> {
     Ok(tuple_list::tuple_list!(a as i32 as i64 as u64))
 }
-pub fn i64truncf64s(a: f64) -> anyhow::Result<tuple_list::tuple_list_type!(u64)> {
+pub fn i64truncf64s<E>(a: f64) -> Result<tuple_list::tuple_list_type!(u64), E> {
     Ok(tuple_list::tuple_list!(
         unsafe { a.trunc().to_int_unchecked::<i64>() } as u64
     ))

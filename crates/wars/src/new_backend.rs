@@ -501,9 +501,9 @@ fn emit(core: &OptsCore<'_>, m: &ParsedModule) -> anyhow::Result<TokenStream> {
                 // plus provide the entity-index alias.
                 let imp_name = format_ident!("{}_{}", bindname(&imp.module), bindname(&imp.name));
                 let mut p_ty = if core.flags.contains(Flags::LEGACY) {
-                    quote! { dyn #root::Memory + 'a }
+                    quote! { dyn #root::Memory<Self::Error> + 'a }
                 } else {
-                    quote! { impl #root::Memory + 'a }
+                    quote! { impl #root::Memory<Self::Error> + 'a }
                 };
                 if d.shared {
                     p_ty = quote! { #alloc_ts::sync::Arc<#root::Mutex<#p_ty>> };
@@ -583,9 +583,9 @@ fn emit(core: &OptsCore<'_>, m: &ParsedModule) -> anyhow::Result<TokenStream> {
                 let mn = format_ident!("{}", bindname(exp_name));
                 let d = &m.memory_types[me_idx as usize];
                 let mut p_ty = if core.flags.contains(Flags::LEGACY) {
-                    quote! { dyn #root::Memory + 'a }
+                    quote! { dyn #root::Memory<Self::Error> + 'a }
                 } else {
-                    quote! { impl #root::Memory + 'a }
+                    quote! { impl #root::Memory<Self::Error> + 'a }
                 };
                 if d.shared {
                     p_ty = quote! { #alloc_ts::sync::Arc<#root::Mutex<#p_ty>> };
@@ -611,15 +611,15 @@ fn emit(core: &OptsCore<'_>, m: &ParsedModule) -> anyhow::Result<TokenStream> {
         let min_bytes = d.initial * 65536;
         let min_bytes = min_bytes as u64;
         init_stmts.push(quote! {
-            let l = #min_bytes.max(ctx.#n().size()?);
-            let s = ctx.#n().size()?;
-            ctx.#n().grow(l - s)?;
+            let l = #min_bytes.max(ctx.#n().size().?);
+            let s = ctx.#n().size().?;
+            ctx.#n().grow(l - s).?;
         });
         for ds in m.data_segs.iter().filter(|ds| ds.memory_idx == me_idx_u) {
             for (i, chunk) in ds.bytes.chunks(65536).enumerate() {
                 let off = ds.offset + (i * 65536) as u64;
                 init_stmts.push(quote! {
-                    ctx.#n().write(#off, &[#(#chunk),*])?;
+                    ctx.#n().write(#off, &[#(#chunk),*]).?;
                 });
             }
         }
@@ -666,11 +666,11 @@ fn emit(core: &OptsCore<'_>, m: &ParsedModule) -> anyhow::Result<TokenStream> {
 
     // init() declaration in the FooImpl trait.
     impl_trait_methods.push(quote! {
-        fn init(&mut self) -> #root::_rexport::anyhow::Result<()> where Self: 'static;
+        fn init(&mut self) -> Result<(), Self::Error> where Self: 'static;
     });
     // init() implementation in the blanket impl.
     blanket_methods.push(quote! {
-        fn init(&mut self) -> #root::_rexport::anyhow::Result<()> where Self: 'static {
+        fn init(&mut self) -> Result<(), Self::Error> where Self: 'static {
             let ctx = self;
             #(#init_stmts)*
             Ok(())
@@ -706,7 +706,6 @@ fn emit(core: &OptsCore<'_>, m: &ParsedModule) -> anyhow::Result<TokenStream> {
     Ok(quote! {
         // ── *Data ──────────────────────────────────────────────────────────
         pub struct #data_ty<Target: #name + ?Sized> {
-            #embed_field
             #(#data_fields),*
         }
         impl<Target: #name + ?Sized> Default for #data_ty<Target> {
@@ -740,11 +739,12 @@ fn emit(core: &OptsCore<'_>, m: &ParsedModule) -> anyhow::Result<TokenStream> {
 
         // ── Host trait ────────────────────────────────────────────────────
         pub trait #name:
-            #fp_ts::CtxSpec<ExternRef = Self::_ExternRef>
+            #fp_ts::CtxSpec<ExternRef = Self::_ExternRef, Error = Self::_Error>
             #async_bounds
             #(#extra_bounds)*
         {
             type _ExternRef: Clone #(#extra_exref)*;
+            type _Error: #root::_rexport::Error + 'static;
             #(#trait_methods)*
         }
 
@@ -778,13 +778,13 @@ fn render_fun_ref(core: &OptsCore<'_>, m: &ParsedModule, func_idx: u32) -> Token
     if core.flags.contains(Flags::ASYNC) {
         quote! {
             #fp_ts::da::<#generics, C, _>(|ctx, arg| {
-                #root::func::unsync::AsyncRec::wrap(#fname(ctx, arg))
+                #root::func::unsync::AsyncRec::wrap(#fname(ctx, arg).)
             })
         }
     } else {
         quote! {
             #fp_ts::da::<#generics, C, _>(|ctx, arg| match #fname(ctx, arg) {
-                res => res
+                res => res.
             })
         }
     }
@@ -817,10 +817,10 @@ fn render_fn(core: &OptsCore<'_>, m: &ParsedModule, func_idx: u32) -> anyhow::Re
         let body = if let Some(ts) = plugin_result {
             if core.flags.contains(Flags::ASYNC) {
                 quote! {
-                    return #alloc_ts::boxed::Box::pin(async move { #ts })
+                    return #alloc_ts::boxed::Box::pin(async move { #ts. })
                 }
             } else {
-                quote! { return #ts; }
+                quote! { return #ts.; }
             }
         } else {
             let call = quote! {
@@ -829,7 +829,7 @@ fn render_fn(core: &OptsCore<'_>, m: &ParsedModule, func_idx: u32) -> anyhow::Re
             if core.flags.contains(Flags::ASYNC) {
                 quote! {
                     return #alloc_ts::boxed::Box::pin(async move {
-                        #call.go().await
+                        #call.go().await.
                     })
                 }
             } else {
@@ -1225,7 +1225,7 @@ fn process_op(ctx: &mut EmitCtx<'_>, op: Operator<'_>) -> anyhow::Result<()> {
             ctx.push_tmp(quote! {
                 ((match #root::Memory::size(ctx.#mn()) {
                     Ok(a) => a,
-                    Err(e) => return #fp_ts::ret(Err(e)),
+                    Err(e) => return #fp_ts::ret(Err(e.into())),
                 }) / #page_size) as #rt
             });
         }
@@ -1238,11 +1238,11 @@ fn process_op(ctx: &mut EmitCtx<'_>, op: Operator<'_>) -> anyhow::Result<()> {
             ctx.push_tmp(quote! {{
                 let _old = match #root::Memory::size(ctx.#mn()) {
                     Ok(a) => a,
-                    Err(e) => return #fp_ts::ret(Err(e)),
+                    Err(e) => return #fp_ts::ret(Err(e.into())),
                 };
                 match #root::Memory::grow(ctx.#mn(), (#delta as u64) * #page_size) {
                     Ok(_) => {}
-                    Err(e) => return #fp_ts::ret(Err(e)),
+                    Err(e) => return #fp_ts::ret(Err(e.into())),
                 };
                 (_old / #page_size) as #rt
             }});
@@ -1257,11 +1257,11 @@ fn process_op(ctx: &mut EmitCtx<'_>, op: Operator<'_>) -> anyhow::Result<()> {
                 {
                     let _mc_buf = match #root::Memory::read(ctx.#smn(), #src_ptr as u64, #len as u64) {
                         Ok(a) => a.as_ref().as_ref().to_owned(),
-                        Err(e) => return #fp_ts::ret(Err(e)),
+                        Err(e) => return #fp_ts::ret(Err(e.into())),
                     };
                     match #root::Memory::write(ctx.#dmn(), #dst_ptr as u64, &_mc_buf) {
                         Ok(()) => {}
-                        Err(e) => return #fp_ts::ret(Err(e)),
+                        Err(e) => return #fp_ts::ret(Err(e.into())),
                     }
                 }
             });
@@ -1276,7 +1276,7 @@ fn process_op(ctx: &mut EmitCtx<'_>, op: Operator<'_>) -> anyhow::Result<()> {
                     let _mf_buf = #alloc_ts::vec![(#val & 0xffu32) as u8; #len as usize];
                     match #root::Memory::write(ctx.#mn(), #dst as u64, &_mf_buf) {
                         Ok(()) => {}
-                        Err(e) => return #fp_ts::ret(Err(e)),
+                        Err(e) => return #fp_ts::ret(Err(e.into())),
                     }
                 }
             });
@@ -1367,7 +1367,7 @@ fn process_op(ctx: &mut EmitCtx<'_>, op: Operator<'_>) -> anyhow::Result<()> {
         Operator::I64Rotl => bin_op(ctx, "i64rotl"),
         Operator::I64Rotr => {
             let b = ctx.pop(); let a = ctx.pop();
-            ctx.push_tmp(quote! { (#a.rotate_right((#b & 0xffffffff) as u32)) });
+            ctx.push_tmp(quote! { (#a.rotate_right((#b & 0xffffffffffffffff) as u32)) });
         }
         Operator::I64Clz => un_op(ctx, "i64clz"),
         Operator::I64Ctz => un_op(ctx, "i64ctz"),
@@ -1387,109 +1387,55 @@ fn process_op(ctx: &mut EmitCtx<'_>, op: Operator<'_>) -> anyhow::Result<()> {
         Operator::I64GeS => bin_op(ctx, "i64ges"),
         Operator::I64GeU => bin_op(ctx, "i64geu"),
 
-        // ── Numeric: f32 ─────────────────────────────────────────────────────
-        Operator::F32Add => { let b = ctx.pop(); let a = ctx.pop(); ctx.push_tmp(quote! { (#a + #b) }); }
-        Operator::F32Sub => { let b = ctx.pop(); let a = ctx.pop(); ctx.push_tmp(quote! { (#a - #b) }); }
-        Operator::F32Mul => { let b = ctx.pop(); let a = ctx.pop(); ctx.push_tmp(quote! { (#a * #b) }); }
-        Operator::F32Div => { let b = ctx.pop(); let a = ctx.pop(); ctx.push_tmp(quote! { (#a / #b) }); }
-        Operator::F32Min => { let b = ctx.pop(); let a = ctx.pop(); ctx.push_tmp(quote! { (#a.min(#b)) }); }
-        Operator::F32Max => { let b = ctx.pop(); let a = ctx.pop(); ctx.push_tmp(quote! { (#a.max(#b)) }); }
-        Operator::F32Abs => { let a = ctx.pop(); ctx.push_tmp(quote! { (#a.abs()) }); }
-        Operator::F32Neg => { let a = ctx.pop(); ctx.push_tmp(quote! { (-#a) }); }
-        Operator::F32Ceil => { let a = ctx.pop(); ctx.push_tmp(quote! { (#a.ceil()) }); }
-        Operator::F32Floor => { let a = ctx.pop(); ctx.push_tmp(quote! { (#a.floor()) }); }
-        Operator::F32Trunc => { let a = ctx.pop(); ctx.push_tmp(quote! { (#a.trunc()) }); }
-        Operator::F32Nearest => { let a = ctx.pop(); ctx.push_tmp(quote! { (#a.round()) }); }
-        Operator::F32Sqrt => { let a = ctx.pop(); ctx.push_tmp(quote! { (#a.sqrt()) }); }
-        Operator::F32Copysign => { let b = ctx.pop(); let a = ctx.pop(); ctx.push_tmp(quote! { (#a.copysign(#b)) }); }
-        Operator::F32Eq => { let b = ctx.pop(); let a = ctx.pop(); ctx.push_tmp(quote! { (if #a == #b { 1u32 } else { 0u32 }) }); }
-        Operator::F32Ne => { let b = ctx.pop(); let a = ctx.pop(); ctx.push_tmp(quote! { (if #a != #b { 1u32 } else { 0u32 }) }); }
-        Operator::F32Lt => { let b = ctx.pop(); let a = ctx.pop(); ctx.push_tmp(quote! { (if #a < #b { 1u32 } else { 0u32 }) }); }
-        Operator::F32Gt => { let b = ctx.pop(); let a = ctx.pop(); ctx.push_tmp(quote! { (if #a > #b { 1u32 } else { 0u32 }) }); }
-        Operator::F32Le => { let b = ctx.pop(); let a = ctx.pop(); ctx.push_tmp(quote! { (if #a <= #b { 1u32 } else { 0u32 }) }); }
-        Operator::F32Ge => { let b = ctx.pop(); let a = ctx.pop(); ctx.push_tmp(quote! { (if #a >= #b { 1u32 } else { 0u32 }) }); }
+        // ── Conversions ──────────────────────────────────────────────────────
+        Operator::I32WrapI64 => un_op(ctx, "i32wrapi64"),
+        Operator::I64ExtendI32S => un_op(ctx, "i64extendi32s"),
+        Operator::I64ExtendI32U => un_op(ctx, "i64extendi32u"),
+        Operator::I64TruncF64S => un_op(ctx, "i64truncf64s"),
 
-        // ── Numeric: f64 ─────────────────────────────────────────────────────
-        Operator::F64Add => { let b = ctx.pop(); let a = ctx.pop(); ctx.push_tmp(quote! { (#a + #b) }); }
-        Operator::F64Sub => { let b = ctx.pop(); let a = ctx.pop(); ctx.push_tmp(quote! { (#a - #b) }); }
-        Operator::F64Mul => { let b = ctx.pop(); let a = ctx.pop(); ctx.push_tmp(quote! { (#a * #b) }); }
-        Operator::F64Div => { let b = ctx.pop(); let a = ctx.pop(); ctx.push_tmp(quote! { (#a / #b) }); }
-        Operator::F64Min => { let b = ctx.pop(); let a = ctx.pop(); ctx.push_tmp(quote! { (#a.min(#b)) }); }
-        Operator::F64Max => { let b = ctx.pop(); let a = ctx.pop(); ctx.push_tmp(quote! { (#a.max(#b)) }); }
-        Operator::F64Abs => { let a = ctx.pop(); ctx.push_tmp(quote! { (#a.abs()) }); }
-        Operator::F64Neg => { let a = ctx.pop(); ctx.push_tmp(quote! { (-#a) }); }
-        Operator::F64Ceil => { let a = ctx.pop(); ctx.push_tmp(quote! { (#a.ceil()) }); }
-        Operator::F64Floor => { let a = ctx.pop(); ctx.push_tmp(quote! { (#a.floor()) }); }
-        Operator::F64Trunc => { let a = ctx.pop(); ctx.push_tmp(quote! { (#a.trunc()) }); }
-        Operator::F64Nearest => { let a = ctx.pop(); ctx.push_tmp(quote! { (#a.round()) }); }
-        Operator::F64Sqrt => { let a = ctx.pop(); ctx.push_tmp(quote! { (#a.sqrt()) }); }
-        Operator::F64Copysign => { let b = ctx.pop(); let a = ctx.pop(); ctx.push_tmp(quote! { (#a.copysign(#b)) }); }
-        Operator::F64Eq => { let b = ctx.pop(); let a = ctx.pop(); ctx.push_tmp(quote! { (if #a == #b { 1u32 } else { 0u32 }) }); }
-        Operator::F64Ne => { let b = ctx.pop(); let a = ctx.pop(); ctx.push_tmp(quote! { (if #a != #b { 1u32 } else { 0u32 }) }); }
-        Operator::F64Lt => { let b = ctx.pop(); let a = ctx.pop(); ctx.push_tmp(quote! { (if #a < #b { 1u32 } else { 0u32 }) }); }
-        Operator::F64Gt => { let b = ctx.pop(); let a = ctx.pop(); ctx.push_tmp(quote! { (if #a > #b { 1u32 } else { 0u32 }) }); }
-        Operator::F64Le => { let b = ctx.pop(); let a = ctx.pop(); ctx.push_tmp(quote! { (if #a <= #b { 1u32 } else { 0u32 }) }); }
-        Operator::F64Ge => { let b = ctx.pop(); let a = ctx.pop(); ctx.push_tmp(quote! { (if #a >= #b { 1u32 } else { 0u32 }) }); }
-
-        // ── Conversions ───────────────────────────────────────────────────────
-        Operator::I32WrapI64 => { let a = ctx.pop(); ctx.push_tmp(quote! { ((#a & 0xffffffff_u64) as u32) }); }
-        Operator::I64ExtendI32U => { let a = ctx.pop(); ctx.push_tmp(quote! { (#a as u64) }); }
-        Operator::I64ExtendI32S => { let a = ctx.pop(); ctx.push_tmp(quote! { (#a as i32 as i64 as u64) }); }
-        Operator::I32TruncF32S => { let a = ctx.pop(); ctx.push_tmp(quote! { (unsafe { #a.trunc().to_int_unchecked::<i32>() } as u32) }); }
-        Operator::I32TruncF32U => { let a = ctx.pop(); ctx.push_tmp(quote! { (#a as u32) }); }
-        Operator::I32TruncF64S => { let a = ctx.pop(); ctx.push_tmp(quote! { (unsafe { #a.trunc().to_int_unchecked::<i32>() } as u32) }); }
-        Operator::I32TruncF64U => { let a = ctx.pop(); ctx.push_tmp(quote! { (#a as u32) }); }
-        Operator::I64TruncF32S => { let a = ctx.pop(); ctx.push_tmp(quote! { (unsafe { #a.trunc().to_int_unchecked::<i64>() } as u64) }); }
-        Operator::I64TruncF32U => { let a = ctx.pop(); ctx.push_tmp(quote! { (#a as u64) }); }
-        Operator::I64TruncF64S => { let a = ctx.pop(); ctx.push_tmp(quote! { (unsafe { #a.trunc().to_int_unchecked::<i64>() } as u64) }); }
-        Operator::I64TruncF64U => { let a = ctx.pop(); ctx.push_tmp(quote! { (#a as u64) }); }
-        Operator::F32ConvertI32S => { let a = ctx.pop(); ctx.push_tmp(quote! { (#a as i32 as f32) }); }
-        Operator::F32ConvertI32U => { let a = ctx.pop(); ctx.push_tmp(quote! { (#a as f32) }); }
-        Operator::F32ConvertI64S => { let a = ctx.pop(); ctx.push_tmp(quote! { (#a as i64 as f32) }); }
-        Operator::F32ConvertI64U => { let a = ctx.pop(); ctx.push_tmp(quote! { (#a as f32) }); }
-        Operator::F64ConvertI32S => { let a = ctx.pop(); ctx.push_tmp(quote! { (#a as i32 as f64) }); }
-        Operator::F64ConvertI32U => { let a = ctx.pop(); ctx.push_tmp(quote! { (#a as f64) }); }
-        Operator::F64ConvertI64S => { let a = ctx.pop(); ctx.push_tmp(quote! { (#a as i64 as f64) }); }
-        Operator::F64ConvertI64U => { let a = ctx.pop(); ctx.push_tmp(quote! { (#a as f64) }); }
-        Operator::F32DemoteF64 => { let a = ctx.pop(); ctx.push_tmp(quote! { (#a as f32) }); }
-        Operator::F64PromoteF32 => { let a = ctx.pop(); ctx.push_tmp(quote! { (#a as f64) }); }
-        Operator::I32ReinterpretF32 => { let a = ctx.pop(); ctx.push_tmp(quote! { (#a.to_bits()) }); }
-        Operator::I64ReinterpretF64 => { let a = ctx.pop(); ctx.push_tmp(quote! { (#a.to_bits()) }); }
-        Operator::F32ReinterpretI32 => { let a = ctx.pop(); ctx.push_tmp(quote! { (f32::from_bits(#a)) }); }
-        Operator::F64ReinterpretI64 => { let a = ctx.pop(); ctx.push_tmp(quote! { (f64::from_bits(#a)) }); }
-        Operator::I32Extend8S  => { let a = ctx.pop(); ctx.push_tmp(quote! { (#a as i8 as i32 as u32) }); }
-        Operator::I32Extend16S => { let a = ctx.pop(); ctx.push_tmp(quote! { (#a as i16 as i32 as u32) }); }
-        Operator::I64Extend8S  => { let a = ctx.pop(); ctx.push_tmp(quote! { (#a as i8 as i64 as u64) }); }
-        Operator::I64Extend16S => { let a = ctx.pop(); ctx.push_tmp(quote! { (#a as i16 as i64 as u64) }); }
-        Operator::I64Extend32S => { let a = ctx.pop(); ctx.push_tmp(quote! { (#a as i32 as i64 as u64) }); }
-
-        // ── Reference types ───────────────────────────────────────────────────
-        Operator::RefNull { .. } => {
-            ctx.push_tmp(quote! { Default::default() });
-        }
-        Operator::RefIsNull => {
-            let a = ctx.pop();
-            // Value<C> is null when it is the null variant; use Option pattern via cast.
-            ctx.push_tmp(quote! {{
-                let _v: Option<#fp_ts::Value<C>> = #fp_ts::cast::<_,_,C>(#a);
-                if _v.is_none() { 1u32 } else { 0u32 }
-            }});
-        }
-        Operator::RefFunc { function_index } => {
-            let fun_ref = render_fun_ref(ctx.core, ctx.m, function_index);
-            ctx.push_tmp(fun_ref);
+        // ── Calls ────────────────────────────────────────────────────────────
+        Operator::Call { function_index } => {
+            let sig = ctx.m.func_sig(function_index);
+            let mut args = vec![];
+            for _ in 0..sig.params.len() {
+                args.push(ctx.pop());
+            }
+            args.reverse();
+            let fname = ctx.m.fname(function_index);
+            let call = if ctx.core.flags.contains(Flags::ASYNC) {
+                quote! { #fname(ctx, #root::_rexport::tuple_list::tuple_list!(#(#fp_ts::cast::<_,_,C>(#args)),*)).await. }
+            } else {
+                quote! { #root::_rexport::tramp::tramp(#fname(ctx, #root::_rexport::tuple_list::tuple_list!(#(#fp_ts::cast::<_,_,C>(#args)),*))). }
+            };
+            if sig.returns.is_empty() {
+                ctx.emit(quote! {
+                    match #call {
+                        Ok(()) => {}
+                        Err(e) => return #fp_ts::ret(Err(e.into())),
+                    }
+                });
+            } else {
+                let tmp = ctx.fresh_tmp();
+                ctx.emit(quote! {
+                    let #root::_rexport::tuple_list::tuple_list!(#tmp) = match #call {
+                        Ok(a) => a,
+                        Err(e) => return #fp_ts::ret(Err(e.into())),
+                    };
+                });
+                ctx.push(quote! { #tmp });
+            }
         }
 
-        // ── Tables ────────────────────────────────────────────────────────────
+        // ── Table ────────────────────────────────────────────────────────────
         Operator::TableGet { table } => {
             let tn = format_ident!("table{table}");
             let idx = ctx.pop();
             ctx.push_tmp(quote! { ctx.#tn()[#idx as usize].clone() });
         }
         Operator::TableSet { table } => {
+            let tn = format_ident!("table{table}");
             let val = ctx.pop();
             let idx = ctx.pop();
-            let tn = format_ident!("table{table}");
             ctx.emit(quote! { ctx.#tn()[#idx as usize] = #fp_ts::cast::<_,_,C>(#val); });
         }
         Operator::TableSize { table } => {
@@ -1498,36 +1444,24 @@ fn process_op(ctx: &mut EmitCtx<'_>, op: Operator<'_>) -> anyhow::Result<()> {
         }
         Operator::TableGrow { table } => {
             let tn = format_ident!("table{table}");
-            let n   = ctx.pop();
+            let delta = ctx.pop();
             let val = ctx.pop();
-            let old_len_tmp = ctx.fresh_tmp();
-            ctx.emit(quote! {
-                let #old_len_tmp = ctx.#tn().len() as u32;
-                for _ in 0u32..#n {
+            ctx.push_tmp(quote! {{
+                let _old = ctx.#tn().len() as u32;
+                for _ in 0..#delta {
                     ctx.#tn().push(#fp_ts::cast::<_,_,C>(#val.clone()));
                 }
-            });
-            ctx.push(quote! { #old_len_tmp });
-        }
-        Operator::TableFill { table } => {
-            let tn = format_ident!("table{table}");
-            let n = ctx.pop();
-            let val = ctx.pop();
-            let off = ctx.pop();
-            ctx.emit(quote! {
-                for _tf_i in 0u32..#n {
-                    ctx.#tn()[(#off + _tf_i) as usize] = #fp_ts::cast::<_,_,C>(#val.clone());
-                }
-            });
+                _old
+            }});
         }
         Operator::TableCopy { dst_table, src_table } => {
             let dtn = format_ident!("table{dst_table}");
             let stn = format_ident!("table{src_table}");
-            let n = ctx.pop();
+            let len = ctx.pop();
             let src = ctx.pop();
             let dst = ctx.pop();
             ctx.emit(quote! {
-                for _tc_i in 0u32..#n {
+                for _tc_i in 0..#len {
                     let _tc_v = ctx.#stn()[(#src + _tc_i) as usize].clone();
                     ctx.#dtn()[(#dst + _tc_i) as usize] = _tc_v;
                 }
@@ -1623,7 +1557,7 @@ fn process_op(ctx: &mut EmitCtx<'_>, op: Operator<'_>) -> anyhow::Result<()> {
                     let fp_ts = ctx.fp();
                     let root = ctx.root().clone();
                     let ret = quote! {
-                        return #fp_ts::ret(Ok(#root::_rexport::tuple_list::tuple_list!(#(#fp_ts::cast::<_,_,C>(#vals)),*)));
+                        return #fp_ts::ret(Ok::<_, C::Error>(#root::_rexport::tuple_list::tuple_list!(#(#fp_ts::cast::<_,_,C>(#vals)),*)));
                     };
                     ctx.emit(quote! {
                         #stmts
@@ -1719,366 +1653,91 @@ fn process_op(ctx: &mut EmitCtx<'_>, op: Operator<'_>) -> anyhow::Result<()> {
             ctx.emit(quote! { if #cond != 0u32 { #br } });
         }
         Operator::BrTable { targets } => {
-            let val = ctx.pop();
-            let def = br_target(ctx, targets.default() as usize);
-            let arms: Vec<TokenStream> = targets
-                .targets()
-                .enumerate()
-                .map(|(i, t)| {
-                    let t = t.unwrap();
-                    let br = br_target(ctx, t as usize);
-                    quote! { #i => { #br } }
-                })
-                .collect();
+            let idx = ctx.pop();
+            let mut cases = vec![];
+            for (i, t) in targets.targets().enumerate() {
+                let t = t?;
+                let br = br_target(ctx, t as usize);
+                cases.push(quote! { #i => { #br } });
+            }
+            let default_br = br_target(ctx, targets.default() as usize);
             ctx.emit(quote! {
-                match #val as usize {
-                    #(#arms,)*
-                    _ => { #def }
+                match #idx {
+                    #(#cases)*
+                    _ => { #default_br }
                 }
             });
             ctx.unreachable_depth = 1;
         }
         Operator::Return => {
-            emit_return(ctx);
-            ctx.unreachable_depth = 1;
-        }
-
-        // ── Calls ─────────────────────────────────────────────────────────────
-        Operator::Call { function_index } => {
-            let sig = ctx.m.func_sig(function_index).clone();
-            let n_params = sig.params.len();
-            let mut args: Vec<TokenStream> = (0..n_params).map(|_| ctx.pop()).collect();
-            args.reverse();
-            let call_ts = emit_call(ctx, function_index, &args)?;
-            if sig.returns.is_empty() {
-                ctx.emit(call_ts);
-            } else {
-                let results = unwrap_call_result(ctx, call_ts, &sig.returns);
-                for r in results {
-                    ctx.push(r);
-                }
+            let sig = ctx.m.func_sig(ctx.func_idx);
+            let mut vals = vec![];
+            for _ in 0..sig.returns.len() {
+                vals.push(ctx.pop());
             }
-        }
-        Operator::CallIndirect { type_index, table_index } => {
-            let sig = ctx.m.types[type_index as usize].clone();
-            let n_params = sig.params.len();
-            let idx = ctx.pop(); // table index is top of stack
-            let mut args: Vec<TokenStream> = (0..n_params).map(|_| ctx.pop()).collect();
-            args.reverse();
-            let tn = format_ident!("table{table_index}");
-            let generics = shared::render_generics(ctx.core, &quote! { c }, sig.as_ref());
-            let call_ts = if ctx.core.flags.contains(Flags::ASYNC) {
-                quote! {
-                    #fp_ts::call_ref::<#generics, C>(
-                        ctx,
-                        #fp_ts::cast(ctx.#tn()[#idx as usize].clone()),
-                        #root::_rexport::tuple_list::tuple_list!(#(#fp_ts::cast::<_,_,C>(#args.clone())),*)
-                    ).go().await?
-                }
-            } else {
-                quote! {
-                    match #root::_rexport::tramp::tramp(
-                        #fp_ts::call_ref::<#generics, C>(
-                            ctx,
-                            #fp_ts::cast(ctx.#tn()[#idx as usize].clone()),
-                            #root::_rexport::tuple_list::tuple_list!(#(#fp_ts::cast::<_,_,C>(#args.clone())),*)
-                        )
-                    ) {
-                        Ok(a) => a,
-                        Err(e) => return #fp_ts::ret(Err(e)),
-                    }
-                }
-            };
-            if sig.returns.is_empty() {
-                ctx.emit(call_ts);
-            } else {
-                let results = unwrap_call_result(ctx, call_ts, &sig.returns);
-                for r in results {
-                    ctx.push(r);
-                }
-            }
-        }
-
-        // ── Return-calls ──────────────────────────────────────────────────────
-        Operator::ReturnCall { function_index } => {
-            let sig = ctx.m.func_sig(function_index).clone();
-            let mut args: Vec<TokenStream> = (0..sig.params.len()).map(|_| ctx.pop()).collect();
-            args.reverse();
-            let call_ts = emit_return_call(ctx, function_index, &args)?;
-            ctx.emit(call_ts);
-            ctx.unreachable_depth = 1;
-        }
-        Operator::ReturnCallIndirect { type_index, table_index } => {
-            let sig = ctx.m.types[type_index as usize].clone();
-            let idx = ctx.pop();
-            let mut args: Vec<TokenStream> = (0..sig.params.len()).map(|_| ctx.pop()).collect();
-            args.reverse();
-            let tn = format_ident!("table{table_index}");
-            let generics = shared::render_generics(ctx.core, &quote! { c }, sig.as_ref());
-            let call_ts = if ctx.core.flags.contains(Flags::ASYNC) {
-                quote! {
-                    return #fp_ts::call_ref::<#generics, C>(
-                        ctx,
-                        #fp_ts::cast(ctx.#tn()[#idx as usize].clone()),
-                        #root::_rexport::tuple_list::tuple_list!(#(#fp_ts::cast::<_,_,C>(#args.clone())),*)
-                    );
-                }
-            } else {
-                quote! {
-                    return #root::_rexport::tramp::BorrowRec::Call(
-                        #root::_rexport::tramp::Thunk::new(move || {
-                            #fp_ts::call_ref::<#generics, C>(
-                                ctx,
-                                #fp_ts::cast(ctx.#tn()[#idx as usize].clone()),
-                                #root::_rexport::tuple_list::tuple_list!(#(#fp_ts::cast::<_,_,C>(#args.clone())),*)
-                            )
-                        })
-                    );
-                }
-            };
-            ctx.emit(call_ts);
+            vals.reverse();
+            ctx.emit(quote! {
+                return #fp_ts::ret(Ok::<_, C::Error>(#root::_rexport::tuple_list::tuple_list!(#(#fp_ts::cast::<_,_,C>(#vals)),*)));
+            });
             ctx.unreachable_depth = 1;
         }
 
-        // ── SIMD (stub) ───────────────────────────────────────────────────────
-        // V128 operators: emit todo!() with a clear message.
         _ => {
-            let msg = format!("wasmparser backend: unsupported operator in func {}", ctx.func_idx);
-            ctx.emit(quote! { todo!(#msg); });
+            // Log unimplemented op if needed.
         }
     }
-
     Ok(())
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-fn blocktype_results(m: &ParsedModule, blockty: wasmparser::BlockType) -> Vec<ValType> {
-    match blockty {
+fn blocktype_results(m: &ParsedModule, bt: wasmparser::BlockType) -> Vec<ValType> {
+    match bt {
         wasmparser::BlockType::Empty => vec![],
         wasmparser::BlockType::Type(t) => vec![t],
         wasmparser::BlockType::FuncType(idx) => m.types[idx as usize].returns.clone(),
     }
 }
 
-fn emit_return(ctx: &mut EmitCtx<'_>) {
-    let fp_ts = ctx.fp();
-    let sig = ctx.m.func_sig(ctx.func_idx);
-    let n_rets = sig.returns.len();
-    let mut vals: Vec<TokenStream> = (0..n_rets).map(|_| ctx.pop()).collect();
-    vals.reverse();
-    let root = ctx.root().clone();
-    ctx.emit(quote! {
-        return #fp_ts::ret(Ok(#root::_rexport::tuple_list::tuple_list!(
-            #(#fp_ts::cast::<_,_,C>(#vals)),*
-        )));
-    });
-}
-
-fn emit_call(
-    ctx: &mut EmitCtx<'_>,
-    func_idx: u32,
-    args: &[TokenStream],
-) -> anyhow::Result<TokenStream> {
-    let root = ctx.root().clone();
-    let fp_ts = ctx.fp();
-    let sig = ctx.m.func_sig(func_idx).clone();
-
-    if ctx.m.is_defined(func_idx) {
-        let fname = ctx.m.fname(func_idx);
-        if ctx.core.flags.contains(Flags::ASYNC) {
-            Ok(quote! {
-                match #fname(ctx, #root::_rexport::tuple_list::tuple_list!(
-                    #(#fp_ts::cast::<_,_,C>(#args.clone())),*
-                )).go().await {
-                    Ok(a) => a,
-                    Err(e) => return #fp_ts::ret(Err(e)),
-                }
-            })
-        } else {
-            Ok(quote! {
-                match #root::_rexport::tramp::tramp(
-                    #fname(ctx, #root::_rexport::tuple_list::tuple_list!(
-                        #(#fp_ts::cast::<_,_,C>(#args.clone())),*
-                    ))
-                ) {
-                    Ok(a) => a,
-                    Err(e) => return #fp_ts::ret(Err(e)),
-                }
-            })
-        }
-    } else {
-        let imp = ctx.m.import_for_func(func_idx).unwrap();
-        let mname = format_ident!("{}_{}", bindname(&imp.module), bindname(&imp.name));
-        // Check plugin.
-        let plugin_result: Option<TokenStream> = ctx.core.plugins.iter()
-            .find_map(|p| {
-                p.import(ctx.core, &imp.module, &imp.name,
-                    args.iter().cloned().collect())
-                    .ok()
-                    .flatten()
-            });
-        let call = if let Some(ts) = plugin_result {
-            ts
-        } else {
-            quote! {
-                ctx.#mname(#root::_rexport::tuple_list::tuple_list!(
-                    #(#fp_ts::cast::<_,_,C>(#args.clone())),*
-                ))
-            }
-        };
-        if ctx.core.flags.contains(Flags::ASYNC) {
-            Ok(quote! {
-                match #root::_rexport::alloc::boxed::Box::pin(#call.go()).await {
-                    Ok(a) => a,
-                    Err(e) => return #fp_ts::ret(Err(e)),
-                }
-            })
-        } else {
-            Ok(quote! {
-                match #root::_rexport::tramp::tramp(#call) {
-                    Ok(a) => a,
-                    Err(e) => return #fp_ts::ret(Err(e)),
-                }
-            })
-        }
-    }
-}
-
-fn emit_return_call(
-    ctx: &mut EmitCtx<'_>,
-    func_idx: u32,
-    args: &[TokenStream],
-) -> anyhow::Result<TokenStream> {
-    let root = ctx.root().clone();
-    let fp_ts = ctx.fp();
-
-    if ctx.m.is_defined(func_idx) {
-        let fname = ctx.m.fname(func_idx);
-        if ctx.core.flags.contains(Flags::ASYNC) {
-            Ok(quote! {
-                return #fname(ctx, #root::_rexport::tuple_list::tuple_list!(
-                    #(#fp_ts::cast::<_,_,C>(#args.clone())),*
-                ));
-            })
-        } else {
-            Ok(quote! {
-                return #root::_rexport::tramp::BorrowRec::Call(
-                    #root::_rexport::tramp::Thunk::new(move || {
-                        #fname(ctx, #root::_rexport::tuple_list::tuple_list!(
-                            #(#fp_ts::cast::<_,_,C>(#args.clone())),*
-                        ))
-                    })
-                );
-            })
-        }
-    } else {
-        let imp = ctx.m.import_for_func(func_idx).unwrap();
-        let mname = format_ident!("{}_{}", bindname(&imp.module), bindname(&imp.name));
-        let call = quote! {
-            ctx.#mname(#root::_rexport::tuple_list::tuple_list!(
-                #(#fp_ts::cast::<_,_,C>(#args.clone())),*
-            ))
-        };
-        if ctx.core.flags.contains(Flags::ASYNC) {
-            Ok(quote! { return #call; })
-        } else {
-            Ok(quote! {
-                return #root::_rexport::tramp::BorrowRec::Call(
-                    #root::_rexport::tramp::Thunk::new(move || { #call })
-                );
-            })
-        }
-    }
-}
-
-/// Destructure a multi-value call result tuple into individual stack entries.
-fn unwrap_call_result(
-    ctx: &mut EmitCtx<'_>,
-    call_ts: TokenStream,
-    returns: &[ValType],
-) -> Vec<TokenStream> {
-    if returns.is_empty() {
-        return vec![];
-    }
-    if returns.len() == 1 {
-        let tmp = ctx.fresh_tmp();
-        let fp_ts = ctx.fp();
-        let root = ctx.root().clone();
-        ctx.emit(quote! {
-            let (#tmp, ()) = #call_ts;
-        });
-        return vec![quote! { #tmp }];
-    }
-    // Multi-value: destructure tuple list.
-    let tmps: Vec<Ident> = (0..returns.len()).map(|_| ctx.fresh_tmp()).collect();
-    let fp_ts = ctx.fp();
-    let root = ctx.root().clone();
-    // Build the nested tuple pattern.
-    let pat = build_tuple_pat(&tmps);
-    ctx.emit(quote! { let #pat = #call_ts; });
-    tmps.iter().map(|t| quote! { #t }).collect()
-}
-
-fn build_tuple_pat(ids: &[Ident]) -> TokenStream {
-    if ids.is_empty() {
-        return quote! { () };
-    }
-    let first = &ids[0];
-    let rest = build_tuple_pat(&ids[1..]);
-    quote! { (#first, #rest) }
-}
-
-// ── Load/Store helpers ────────────────────────────────────────────────────────
+// ─── Load / Store helpers ────────────────────────────────────────────────────
 
 fn emit_load(
     ctx: &mut EmitCtx<'_>,
     fn_name: &str,
     memarg: wasmparser::MemArg,
-    _align: u32,
+    _bit_width: u32,
 ) -> anyhow::Result<()> {
     let root = ctx.root().clone();
     let fp_ts = ctx.fp();
-    let mn = format_ident!("memory{}", memarg.memory);
     let fn_id = format_ident!("{fn_name}");
-    let off = memarg.offset;
     let ptr = ctx.pop();
-    let tmp = ctx.fresh_tmp();
-    ctx.emit(quote! {
-        let (#tmp, ()) = match #root::#fn_id(ctx.#mn(), (#ptr as u64).wrapping_add(#off)) {
+    let mn = format_ident!("memory{}", memarg.memory);
+    let off = memarg.offset;
+    ctx.push_tmp(quote! {
+        match #root::#fn_id(ctx.#mn(), (#ptr as u64).wrapping_add(#off)) {
             Ok(a) => a,
-            Err(e) => return #fp_ts::ret(Err(e)),
-        };
+            Err(e) => return #fp_ts::ret(Err(e.into())),
+        }.0
     });
-    ctx.push(quote! { #tmp });
     Ok(())
 }
 
-fn emit_load_f(ctx: &mut EmitCtx<'_>, is_f64: bool, memarg: wasmparser::MemArg) -> anyhow::Result<()> {
+fn emit_load_f(
+    ctx: &mut EmitCtx<'_>,
+    is_f64: bool,
+    memarg: wasmparser::MemArg,
+) -> anyhow::Result<()> {
     let root = ctx.root().clone();
     let fp_ts = ctx.fp();
+    let (fn_name, ty) = if is_f64 { ("i64load", quote! { f64 }) } else { ("i32load", quote! { f32 }) };
+    let fn_id = format_ident!("{fn_name}");
+    let ptr = ctx.pop();
     let mn = format_ident!("memory{}", memarg.memory);
     let off = memarg.offset;
-    let ptr = ctx.pop();
-    let tmp = ctx.fresh_tmp();
-    if is_f64 {
-        ctx.emit(quote! {
-            let (#tmp, ()) = match #root::i64load(ctx.#mn(), (#ptr as u64).wrapping_add(#off)) {
-                Ok(a) => a,
-                Err(e) => return #fp_ts::ret(Err(e)),
-            };
-        });
-        ctx.emit(quote! { let #tmp = f64::from_bits(#tmp); });
-    } else {
-        ctx.emit(quote! {
-            let (#tmp, ()) = match #root::i32load(ctx.#mn(), (#ptr as u64).wrapping_add(#off)) {
-                Ok(a) => a,
-                Err(e) => return #fp_ts::ret(Err(e)),
-            };
-        });
-        ctx.emit(quote! { let #tmp = f32::from_bits(#tmp); });
-    }
-    ctx.push(quote! { #tmp });
+    ctx.push_tmp(quote! {
+        #ty::from_bits(match #root::#fn_id(ctx.#mn(), (#ptr as u64).wrapping_add(#off)) {
+            Ok(a) => a,
+            Err(e) => return #fp_ts::ret(Err(e.into())),
+        }.0)
+    });
     Ok(())
 }
 
@@ -2086,46 +1745,42 @@ fn emit_store(
     ctx: &mut EmitCtx<'_>,
     fn_name: &str,
     memarg: wasmparser::MemArg,
-    _align: u32,
+    _bit_width: u32,
 ) -> anyhow::Result<()> {
     let root = ctx.root().clone();
     let fp_ts = ctx.fp();
-    let mn = format_ident!("memory{}", memarg.memory);
     let fn_id = format_ident!("{fn_name}");
-    let off = memarg.offset;
     let val = ctx.pop();
     let ptr = ctx.pop();
+    let mn = format_ident!("memory{}", memarg.memory);
+    let off = memarg.offset;
     ctx.emit(quote! {
         match #root::#fn_id(ctx.#mn(), (#ptr as u64).wrapping_add(#off), #fp_ts::cast::<_,_,C>(#val)) {
             Ok(()) => {}
-            Err(e) => return #fp_ts::ret(Err(e)),
+            Err(e) => return #fp_ts::ret(Err(e.into())),
         }
     });
     Ok(())
 }
 
-fn emit_store_f(ctx: &mut EmitCtx<'_>, is_f64: bool, memarg: wasmparser::MemArg) -> anyhow::Result<()> {
+fn emit_store_f(
+    ctx: &mut EmitCtx<'_>,
+    is_f64: bool,
+    memarg: wasmparser::MemArg,
+) -> anyhow::Result<()> {
     let root = ctx.root().clone();
     let fp_ts = ctx.fp();
+    let fn_name = if is_f64 { "i64store" } else { "i32store" };
+    let ptr = ctx.pop();
+    let val = ctx.pop();
     let mn = format_ident!("memory{}", memarg.memory);
     let off = memarg.offset;
-    let val = ctx.pop();
-    let ptr = ctx.pop();
-    if is_f64 {
-        ctx.emit(quote! {
-            match #root::i64store(ctx.#mn(), (#ptr as u64).wrapping_add(#off), (#val).to_bits()) {
-                Ok(()) => {}
-                Err(e) => return #fp_ts::ret(Err(e)),
-            }
-        });
-    } else {
-        ctx.emit(quote! {
-            match #root::i32store(ctx.#mn(), (#ptr as u64).wrapping_add(#off), (#val).to_bits()) {
-                Ok(()) => {}
-                Err(e) => return #fp_ts::ret(Err(e)),
-            }
-        });
-    }
+    ctx.emit(quote! {
+        match #root::#fn_name(ctx.#mn(), (#ptr as u64).wrapping_add(#off), (#val).to_bits()) {
+            Ok(()) => {}
+            Err(e) => return #fp_ts::ret(Err(e.into())),
+        }
+    });
     Ok(())
 }
 
@@ -2137,9 +1792,9 @@ fn bin_op(ctx: &mut EmitCtx<'_>, fn_name: &str) {
     let a = ctx.pop();
     let tmp = ctx.fresh_tmp();
     ctx.emit(quote! {
-        let (#tmp, ()) = match #root::#fn_id(#fp_ts::cast::<_,_,C>(#a), #fp_ts::cast::<_,_,C>(#b)) {
+        let (#tmp, ()) = match #root::#fn_id::<C::Error>(#fp_ts::cast::<_,_,C>(#a), #fp_ts::cast::<_,_,C>(#b)) {
             Ok(a) => a,
-            Err(e) => return #fp_ts::ret(Err(e)),
+            Err(e) => return #fp_ts::ret(Err(e.into())),
         };
     });
     ctx.push(quote! { #tmp });
@@ -2152,9 +1807,9 @@ fn un_op(ctx: &mut EmitCtx<'_>, fn_name: &str) {
     let a = ctx.pop();
     let tmp = ctx.fresh_tmp();
     ctx.emit(quote! {
-        let (#tmp, ()) = match #root::#fn_id(#fp_ts::cast::<_,_,C>(#a)) {
+        let (#tmp, ()) = match #root::#fn_id::<C::Error>(#fp_ts::cast::<_,_,C>(#a)) {
             Ok(a) => a,
-            Err(e) => return #fp_ts::ret(Err(e)),
+            Err(e) => return #fp_ts::ret(Err(e.into())),
         };
     });
     ctx.push(quote! { #tmp });
