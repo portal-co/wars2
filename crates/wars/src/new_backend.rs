@@ -1057,6 +1057,7 @@ fn emit_body(
 
     // Outer frame: the function body itself.
     let fn_label = ctx.fresh_label();
+    ctx.push_buf();
     ctx.frames.push(Frame {
         kind: FrameKind::Block,
         label: fn_label,
@@ -1610,6 +1611,27 @@ fn process_op(ctx: &mut EmitCtx<'_>, op: Operator<'_>) -> anyhow::Result<()> {
             if let Some(frame) = ctx.frames.pop() {
                 let body = ctx.pop_buf();
                 let stmts = quote! { #(#body)* };
+
+                if ctx.frames.is_empty() {
+                    // Function end.
+                    let sig = ctx.m.func_sig(ctx.func_idx);
+                    let mut vals = vec![];
+                    for _ in 0..sig.returns.len() {
+                        vals.push(ctx.pop());
+                    }
+                    vals.reverse();
+                    let fp_ts = ctx.fp();
+                    let root = ctx.root().clone();
+                    let ret = quote! {
+                        return #fp_ts::ret(Ok(#root::_rexport::tuple_list::tuple_list!(#(#fp_ts::cast::<_,_,C>(#vals)),*)));
+                    };
+                    ctx.emit(quote! {
+                        #stmts
+                        #ret
+                    });
+                    return Ok(());
+                }
+
                 match frame.kind {
                     FrameKind::Block => {
                         let lt = Lifetime::new(&format!("'l{}", frame.label), Span::call_site());

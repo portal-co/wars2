@@ -539,7 +539,7 @@ dependencies = [
  "portal-pc-waffle-frontend",
  "portal-pc-waffle-ir",
  "portal-pc-waffle-passes",
- "wasm-encoder",
+ "wasm-encoder 0.241.2",
  "wasmparser 0.241.2",
 ]
 
@@ -555,7 +555,7 @@ dependencies = [
  "portal-pc-waffle-ir",
  "portal-pc-waffle-passes-shared",
  "smallvec",
- "wasm-encoder",
+ "wasm-encoder 0.241.2",
  "wasmparser 0.241.2",
 ]
 
@@ -578,7 +578,7 @@ dependencies = [
  "log",
  "portal-pc-waffle-entity",
  "portal-pc-waffle-ir",
- "wasm-encoder",
+ "wasm-encoder 0.241.2",
  "wasmparser 0.241.2",
 ]
 
@@ -600,7 +600,7 @@ dependencies = [
  "serde",
  "sha3",
  "smallvec",
- "wasm-encoder",
+ "wasm-encoder 0.241.2",
  "wasmparser 0.241.2",
 ]
 
@@ -809,6 +809,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "static_assertions"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
+
+[[package]]
 name = "syn"
 version = "1.0.109"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -828,6 +834,21 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "tester"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "proc-macro2",
+ "quote",
+ "static_assertions",
+ "syn 2.0.117",
+ "tuple_list",
+ "wars",
+ "wars-rt",
+ "wasm-encoder 0.240.0",
 ]
 
 [[package]]
@@ -958,6 +979,16 @@ dependencies = [
  "portal-pc-tramp",
  "spin",
  "tuple_list",
+]
+
+[[package]]
+name = "wasm-encoder"
+version = "0.240.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06d642d8c5ecc083aafe9ceb32809276a304547a3a6eeecceb5d8152598bc71f"
+dependencies = [
+ "leb128fmt",
+ "wasmparser 0.240.0",
 ]
 
 [[package]]
