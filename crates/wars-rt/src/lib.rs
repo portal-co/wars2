@@ -99,18 +99,18 @@ pub mod ic {
         }
     }
 }
-impl Memory<anyhow::Error> for Vec<u8> {
-    fn read<'a>(&'a self, a: u64, s: u64) -> anyhow::Result<Box<dyn AsRef<[u8]> + 'a>> {
+impl<E> Memory<E> for Vec<u8> {
+    fn read<'a>(&'a self, a: u64, s: u64) -> Result<Box<dyn AsRef<[u8]> + 'a>, E> {
         Ok(Box::new(&self[(a as usize)..][..(s as usize)]))
     }
-    fn write(&mut self, a: u64, x: &[u8]) -> anyhow::Result<()> {
+    fn write(&mut self, a: u64, x: &[u8]) -> Result<(), E> {
         self[(a as usize)..][..x.len()].copy_from_slice(x);
         Ok(())
     }
-    fn size(&self) -> anyhow::Result<u64> {
+    fn size(&self) -> Result<u64, E> {
         Ok(self.len() as u64)
     }
-    fn grow(&mut self, x: u64) -> anyhow::Result<()> {
+    fn grow(&mut self, x: u64) -> Result<(), E> {
         self.extend((0..x).map(|_a| 0u8));
         Ok(())
     }
@@ -130,41 +130,41 @@ impl<T: Memory<E> + ?Sized, E> Memory<E> for Box<T> {
     }
 }
 #[cfg(feature = "std")]
-impl<T: Memory<anyhow::Error>> Memory<anyhow::Error> for Arc<std::sync::Mutex<T>> {
-    fn read<'a>(&'a self, a: u64, s: u64) -> anyhow::Result<Box<dyn AsRef<[u8]> + 'a>> {
+impl<T: Memory<E>, E> Memory<E> for Arc<std::sync::Mutex<T>> {
+    fn read<'a>(&'a self, a: u64, s: u64) -> Result<Box<dyn AsRef<[u8]> + 'a>, E> {
         let l = self.lock().unwrap();
         let r = l.read(a, s)?;
         return Ok(Box::new(r.as_ref().as_ref().to_vec()));
     }
-    fn write(&mut self, a: u64, x: &[u8]) -> anyhow::Result<()> {
+    fn write(&mut self, a: u64, x: &[u8]) -> Result<(), E> {
         let mut l = self.lock().unwrap();
         return l.write(a, x);
     }
-    fn size(&self) -> anyhow::Result<u64> {
+    fn size(&self) -> Result<u64, E> {
         let l = self.lock().unwrap();
         return l.size();
     }
-    fn grow(&mut self, x: u64) -> anyhow::Result<()> {
+    fn grow(&mut self, x: u64) -> Result<(), E> {
         let mut l = self.lock().unwrap();
         return l.grow(x);
     }
 }
 #[cfg(not(feature = "std"))]
-impl<T: Memory<anyhow::Error>> Memory<anyhow::Error> for Arc<spin::Mutex<T>> {
-    fn read<'a>(&'a self, a: u64, s: u64) -> anyhow::Result<Box<dyn AsRef<[u8]> + 'a>> {
+impl<T: Memory<E>, E> Memory<E> for Arc<spin::Mutex<T>> {
+    fn read<'a>(&'a self, a: u64, s: u64) -> Result<Box<dyn AsRef<[u8]> + 'a>, E> {
         let l = self.lock();
         let r = l.read(a, s)?;
         return Ok(Box::new(r.as_ref().as_ref().to_vec()));
     }
-    fn write(&mut self, a: u64, x: &[u8]) -> anyhow::Result<()> {
+    fn write(&mut self, a: u64, x: &[u8]) -> Result<(), E> {
         let mut l = self.lock();
         return l.write(a, x);
     }
-    fn size(&self) -> anyhow::Result<u64> {
+    fn size(&self) -> Result<u64, E> {
         let l = self.lock();
         return l.size();
     }
-    fn grow(&mut self, x: u64) -> anyhow::Result<()> {
+    fn grow(&mut self, x: u64) -> Result<(), E> {
         let mut l = self.lock();
         return l.grow(x);
     }

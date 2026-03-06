@@ -92,7 +92,7 @@ pub(crate) fn import(
     //                         return quasiquote! {
     //                             #{fp(opts)}::ret(match #l::syscall!(#l::#{format_ident!("SYS_{s}")}, #(#params),*).try_usize(){
     //                                 Ok(a) => Ok(a as u64),
-    //                                 Err(e) => Err(e.into())
+    //                                 Err(e) => Err(e)
     //                             })
     //                         };
     //                     }
@@ -323,9 +323,9 @@ pub(crate) fn render_fun_ref(opts: &Opts<'_>, ctx: &TokenStream, x: Func) -> Tok
         render_generics(opts, ctx, &opts.module.signatures[opts.module.funcs[x].sig()]);
     let x = fname(opts, x);
     let r = if opts.core.flags.contains(Flags::ASYNC) {
-        quote! { #root::func::unsync::AsyncRec::wrap(res.map_err(Into::into)) }
+        quote! { #root::func::unsync::AsyncRec::wrap(res) }
     } else {
-        quote! { res.map_err(Into::into) }
+        quote! { res }
     };
     quote! {
         #fp_ts::da::<#generics,C,_>(|ctx,arg|match #x(ctx,arg){
@@ -449,9 +449,9 @@ fn render_statements(
                                 let func = fname(opts, *function_index);
                                 let vals = vals.iter().map(|a|format_ident!("{a}"));
                                 let tramp = if opts.core.flags.contains(Flags::ASYNC) {
-                                    quote! { x.go().await.map_err(Into::into) }
+                                    quote! { x.go().await }
                                 } else {
-                                    quote! { #root::_rexport::tramp::tramp(x).map_err(Into::into) }
+                                    quote! { #root::_rexport::tramp::tramp(x) }
                                 };
                                 let fp_ts2 = fp(opts);
                                 quote! {
@@ -459,7 +459,7 @@ fn render_statements(
                                         let x = #func(ctx,#root::_rexport::tuple_list::tuple_list!(#(#fp_ts::cast::<_,_,C>(#vals .clone())),*));
                                         match #tramp {
                                             Ok(a) => a,
-                                            Err(e) => return #fp_ts2::ret(Err(e.into()))
+                                            Err(e) => return #fp_ts2::ret(Err(e))
                                         }
                                     }
                                 }
@@ -480,14 +480,14 @@ fn render_statements(
                                 let alloc_ts = alloc(opts);
                                 let fp_ts2 = fp(opts);
                                 let tramp = if opts.core.flags.contains(Flags::ASYNC) {
-                                    quote! { #alloc_ts::boxed::Box::pin(#x.go()).await.map_err(Into::into) }
+                                    quote! { #alloc_ts::boxed::Box::pin(#x.go()).await }
                                 } else {
-                                    quote! { #root::_rexport::tramp::tramp(#x).map_err(Into::into) }
+                                    quote! { #root::_rexport::tramp::tramp(#x) }
                                 };
                                 quote! {
                                     match #tramp {
                                         Ok(a) => a,
-                                        Err(e) => return #fp_ts2::ret(Err(e.into()))
+                                        Err(e) => return #fp_ts2::ret(Err(e))
                                     }
                                 }
                             }
@@ -501,16 +501,16 @@ fn render_statements(
                         let g = render_generics(opts, &quote! {c}, &opts.module.signatures[*sig_index]);
                         let fp_ts2 = fp(opts);
                         let tramp = if opts.core.flags.contains(Flags::ASYNC) {
-                            quote! { x.go().await.map_err(Into::into) }
+                            quote! { x.go().await }
                         } else {
-                            quote! { #root::_rexport::tramp::tramp(x).map_err(Into::into) }
+                            quote! { #root::_rexport::tramp::tramp(x) }
                         };
                         quote! {
                             {
                                 let x = #fp_ts2::call_ref::<#g,C>(ctx,#fp_ts2(#r.clone()),#root::_rexport::tuple_list::tuple_list!(#(#fp_ts::cast::<_,_,C>(#vals .clone())),*));
                                 match #tramp {
                                     Ok(a) => a,
-                                    Err(e) => return #fp_ts2::ret(Err(e.into()))
+                                    Err(e) => return #fp_ts2::ret(Err(e))
                                 }
                             }
                         }
@@ -525,9 +525,9 @@ fn render_statements(
                         let g = render_generics(opts, &quote! {c}, &opts.module.signatures[*sig_index]);
                         let fp_ts2 = fp(opts);
                         let tramp = if opts.core.flags.contains(Flags::ASYNC) {
-                            quote! { x.go().await.map_err(Into::into) }
+                            quote! { x.go().await }
                         } else {
-                            quote! { #root::_rexport::tramp::tramp(x).map_err(Into::into) }
+                            quote! { #root::_rexport::tramp::tramp(x) }
                         };
                         quote! {
                             {
@@ -535,7 +535,7 @@ fn render_statements(
                                 let x = #fp_ts2::call_ref::<#g,C>(ctx,#fp_ts2::cast(r),#root::_rexport::tuple_list::tuple_list!(#(#fp_ts::cast::<_,_,C>(#vals .clone())),*));
                                 match #tramp {
                                     Ok(a) => a,
-                                    Err(e) => return #fp_ts2::ret(Err(e.into()))
+                                    Err(e) => return #fp_ts2::ret(Err(e))
                                 }
                             }
                         }
@@ -552,9 +552,9 @@ fn render_statements(
                         let m = Ident::new(&mem_idx.to_string(), Span::call_site());
                         let fp_ts2 = fp(opts);
                         quote! {
-                            #root::_rexport::tuple_list::tuple_list!(((match #root::Memory::size(ctx.#m()){
+                            #root::_rexport::tuple_list::tuple_list!(((match #root::Memory::<Self::_Error>::size(ctx.#m()){
                                 Ok(a) => a,
-                                Err(e) => return #fp_ts2::ret(Err(e.into()))
+                                Err(e) => return #fp_ts2::ret(Err(e))
                             }) / #n) as #rt)
                         }
                     }
@@ -570,13 +570,13 @@ fn render_statements(
                         let fp_ts2 = fp(opts);
                         quote! {
                             {
-                                let vn = (match #root::Memory::size(ctx.#m()){
+                                let vn = (match #root::Memory::<Self::_Error>::size(ctx.#m()){
                                     Ok(a) => a,
-                                    Err(e) => return #fp_ts2::ret(Err(e.into()))
+                                    Err(e) => return #fp_ts2::ret(Err(e))
                                 }) / #n;
-                                match #root::Memory::grow(ctx.#m(),(#a .clone() as u64) * #n){
+                                match #root::Memory::<Self::_Error>::grow(ctx.#m(),(#a .clone() as u64) * #n){
                                     Ok(a) => a,
-                                    Err(e) => return #fp_ts2::ret(Err(e.into()))
+                                    Err(e) => return #fp_ts2::ret(Err(e))
                                 };
                                 #root::_rexport::tuple_list::tuple_list!(vn as #rt)
                             }
@@ -593,11 +593,11 @@ fn render_statements(
                             {
                                 let m = match #src.read(#src_ptr as u64,#len as u64){
                                     Ok(a) => a,
-                                    Err(e) => return #fp_ts2::ret(Err(e.into()))
+                                    Err(e) => return #fp_ts2::ret(Err(e))
                                 }.as_ref().as_ref().to_owned();
                                 match #dst.write(#dst_ptr as u64,&m){
                                     Ok(a) => a,
-                                    Err(e) => return #fp_ts2::ret(Err(e.into()))
+                                    Err(e) => return #fp_ts2::ret(Err(e))
                                 };
                                 ()
                             }
@@ -615,7 +615,7 @@ fn render_statements(
                                 let m = #alloc_ts::vec![(#val & 0xff) as u8; #len as usize];
                                 match #dst.write(#dst_ptr as u64,&m){
                                     Ok(a) => a,
-                                    Err(e) => return #fp_ts2::ret(Err(e.into()))
+                                    Err(e) => return #fp_ts2::ret(Err(e))
                                 };
                                 ()
                             }
@@ -744,9 +744,9 @@ fn render_statements(
                         let vals = once(quote! {(#val.clone() + #offset)}).chain(vals.map(|w|quote!{#w}));
                         let fp_ts2 = fp(opts);
                         quote! {
-                            match #root::#clean::<#rt,_>(#mem_tok,#(#fp_ts::cast::<_,_,C>(#vals .clone())),*){
+                            match #root::#clean::<#rt,_,_>(#mem_tok,#(#fp_ts::cast::<_,_,C>(#vals .clone())),*){
                                 Ok(a) => a,
-                                Err(e) => return #fp_ts2::ret(Err(e.into()))
+                                Err(e) => return #fp_ts2::ret(Err(e))
                             }
                         }
                     },
@@ -770,7 +770,7 @@ fn render_statements(
                         quote! {
                             match #root::#clean(#(#fp_ts::cast::<_,_,C>(#vals .clone())),*){
                                 Ok(a) => a,
-                                Err(e) => return #fp_ts2::ret(Err(e.into()))
+                                Err(e) => return #fp_ts2::ret(Err(e))
                             }
                         }
                     }
@@ -1369,10 +1369,10 @@ pub(crate) fn go(
                 } else {
                     let m = Ident::new(&format!("{a}_{b}"), Span::call_site());
                     let mut p = if opts.core.flags.contains(Flags::LEGACY) {
-                        quote! {dyn #root::Memory<Self::Error> + 'a}
+                        quote! {dyn #root::Memory::<Self::_Error><Self::Error> + 'a}
                     } else {
                         quote! {
-                            impl #root::Memory<Self::Error> + 'a
+                            impl #root::Memory::<Self::_Error><Self::Error> + 'a
                         }
                     };
                     if d.shared {
@@ -1391,9 +1391,9 @@ pub(crate) fn go(
         let pk = d.initial_pages * 65536;
         let pk = pk as u64;
         init.push(quote! {
-            let l = #pk.max(ctx.#n().size().map_err(Into::into)?);
-            let s = ctx.#n().size().map_err(Into::into)?;
-            ctx.#n().grow(l - s).map_err(Into::into)?;
+            let l = #pk.max(ctx.#n().size()?);
+            let s = ctx.#n().size()?;
+            ctx.#n().grow(l - s)?;
         });
         for s in d.segments.clone() {
             for (i, d) in s.data.chunks(65536).enumerate() {
@@ -1402,7 +1402,7 @@ pub(crate) fn go(
                 let _pk = _pk + 1;
                 let o = o as u64;
                 init.push(quote! {
-                    ctx.#n().write(#o,&[#(#d),*]).map_err(Into::into)?
+                    ctx.#n().write(#o,&[#(#d),*])?
                 });
             }
         }
@@ -1463,9 +1463,9 @@ pub(crate) fn go(
                 let x = Ident::new(&m.to_string(), Span::call_site());
                 let mn = Ident::new(&xp.name, Span::call_site());
                 let mut p = if opts.core.flags.contains(Flags::LEGACY) {
-                    quote! { dyn #root::Memory<Self::Error> + 'a }
+                    quote! { dyn #root::Memory::<Self::_Error><Self::Error> + 'a }
                 } else {
-                    quote! { impl #root::Memory<Self::Error> + 'a }
+                    quote! { impl #root::Memory::<Self::_Error><Self::Error> + 'a }
                 };
                 if opts.module.memories[*m].shared {
                     let alloc_ts = alloc(&opts);

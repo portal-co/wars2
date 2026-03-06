@@ -1223,9 +1223,9 @@ fn process_op(ctx: &mut EmitCtx<'_>, op: Operator<'_>) -> anyhow::Result<()> {
             let page_size = 65536u64;
             let rt = if mem_ty.memory64 { quote! { u64 } } else { quote! { u32 } };
             ctx.push_tmp(quote! {
-                ((match #root::Memory::size(ctx.#mn()) {
+                ((match #root::Memory::<Self::_Error>::size(ctx.#mn()) {
                     Ok(a) => a,
-                    Err(e) => return #fp_ts::ret(Err(e.into())),
+                    Err(e) => return #fp_ts::ret(Err(e)),
                 }) / #page_size) as #rt
             });
         }
@@ -1236,13 +1236,13 @@ fn process_op(ctx: &mut EmitCtx<'_>, op: Operator<'_>) -> anyhow::Result<()> {
             let rt = if mem_ty.memory64 { quote! { u64 } } else { quote! { u32 } };
             let delta = ctx.pop();
             ctx.push_tmp(quote! {{
-                let _old = match #root::Memory::size(ctx.#mn()) {
+                let _old = match #root::Memory::<Self::_Error>::size(ctx.#mn()) {
                     Ok(a) => a,
-                    Err(e) => return #fp_ts::ret(Err(e.into())),
+                    Err(e) => return #fp_ts::ret(Err(e)),
                 };
-                match #root::Memory::grow(ctx.#mn(), (#delta as u64) * #page_size) {
+                match #root::Memory::<Self::_Error>::grow(ctx.#mn(), (#delta as u64) * #page_size) {
                     Ok(_) => {}
-                    Err(e) => return #fp_ts::ret(Err(e.into())),
+                    Err(e) => return #fp_ts::ret(Err(e)),
                 };
                 (_old / #page_size) as #rt
             }});
@@ -1255,13 +1255,13 @@ fn process_op(ctx: &mut EmitCtx<'_>, op: Operator<'_>) -> anyhow::Result<()> {
             let dst_ptr = ctx.pop();
             ctx.emit(quote! {
                 {
-                    let _mc_buf = match #root::Memory::read(ctx.#smn(), #src_ptr as u64, #len as u64) {
+                    let _mc_buf = match #root::Memory::<Self::_Error>::read(ctx.#smn(), #src_ptr as u64, #len as u64) {
                         Ok(a) => a.as_ref().as_ref().to_owned(),
-                        Err(e) => return #fp_ts::ret(Err(e.into())),
+                        Err(e) => return #fp_ts::ret(Err(e)),
                     };
-                    match #root::Memory::write(ctx.#dmn(), #dst_ptr as u64, &_mc_buf) {
+                    match #root::Memory::<Self::_Error>::write(ctx.#dmn(), #dst_ptr as u64, &_mc_buf) {
                         Ok(()) => {}
-                        Err(e) => return #fp_ts::ret(Err(e.into())),
+                        Err(e) => return #fp_ts::ret(Err(e)),
                     }
                 }
             });
@@ -1274,9 +1274,9 @@ fn process_op(ctx: &mut EmitCtx<'_>, op: Operator<'_>) -> anyhow::Result<()> {
             ctx.emit(quote! {
                 {
                     let _mf_buf = #alloc_ts::vec![(#val & 0xffu32) as u8; #len as usize];
-                    match #root::Memory::write(ctx.#mn(), #dst as u64, &_mf_buf) {
+                    match #root::Memory::<Self::_Error>::write(ctx.#mn(), #dst as u64, &_mf_buf) {
                         Ok(()) => {}
-                        Err(e) => return #fp_ts::ret(Err(e.into())),
+                        Err(e) => return #fp_ts::ret(Err(e)),
                     }
                 }
             });
@@ -1411,7 +1411,7 @@ fn process_op(ctx: &mut EmitCtx<'_>, op: Operator<'_>) -> anyhow::Result<()> {
                 ctx.emit(quote! {
                     match #call {
                         Ok(()) => {}
-                        Err(e) => return #fp_ts::ret(Err(e.into())),
+                        Err(e) => return #fp_ts::ret(Err(e)),
                     }
                 });
             } else {
@@ -1419,7 +1419,7 @@ fn process_op(ctx: &mut EmitCtx<'_>, op: Operator<'_>) -> anyhow::Result<()> {
                 ctx.emit(quote! {
                     let #root::_rexport::tuple_list::tuple_list!(#tmp) = match #call {
                         Ok(a) => a,
-                        Err(e) => return #fp_ts::ret(Err(e.into())),
+                        Err(e) => return #fp_ts::ret(Err(e)),
                     };
                 });
                 ctx.push(quote! { #tmp });
@@ -1714,7 +1714,7 @@ fn emit_load(
     ctx.push_tmp(quote! {
         match #root::#fn_id(ctx.#mn(), (#ptr as u64).wrapping_add(#off)) {
             Ok(a) => a,
-            Err(e) => return #fp_ts::ret(Err(e.into())),
+            Err(e) => return #fp_ts::ret(Err(e)),
         }.0
     });
     Ok(())
@@ -1735,7 +1735,7 @@ fn emit_load_f(
     ctx.push_tmp(quote! {
         #ty::from_bits(match #root::#fn_id(ctx.#mn(), (#ptr as u64).wrapping_add(#off)) {
             Ok(a) => a,
-            Err(e) => return #fp_ts::ret(Err(e.into())),
+            Err(e) => return #fp_ts::ret(Err(e)),
         }.0)
     });
     Ok(())
@@ -1757,7 +1757,7 @@ fn emit_store(
     ctx.emit(quote! {
         match #root::#fn_id(ctx.#mn(), (#ptr as u64).wrapping_add(#off), #fp_ts::cast::<_,_,C>(#val)) {
             Ok(()) => {}
-            Err(e) => return #fp_ts::ret(Err(e.into())),
+            Err(e) => return #fp_ts::ret(Err(e)),
         }
     });
     Ok(())
@@ -1778,7 +1778,7 @@ fn emit_store_f(
     ctx.emit(quote! {
         match #root::#fn_name(ctx.#mn(), (#ptr as u64).wrapping_add(#off), (#val).to_bits()) {
             Ok(()) => {}
-            Err(e) => return #fp_ts::ret(Err(e.into())),
+            Err(e) => return #fp_ts::ret(Err(e)),
         }
     });
     Ok(())
@@ -1794,7 +1794,7 @@ fn bin_op(ctx: &mut EmitCtx<'_>, fn_name: &str) {
     ctx.emit(quote! {
         let (#tmp, ()) = match #root::#fn_id::<C::Error>(#fp_ts::cast::<_,_,C>(#a), #fp_ts::cast::<_,_,C>(#b)) {
             Ok(a) => a,
-            Err(e) => return #fp_ts::ret(Err(e.into())),
+            Err(e) => return #fp_ts::ret(Err(e)),
         };
     });
     ctx.push(quote! { #tmp });
@@ -1809,7 +1809,7 @@ fn un_op(ctx: &mut EmitCtx<'_>, fn_name: &str) {
     ctx.emit(quote! {
         let (#tmp, ()) = match #root::#fn_id::<C::Error>(#fp_ts::cast::<_,_,C>(#a)) {
             Ok(a) => a,
-            Err(e) => return #fp_ts::ret(Err(e.into())),
+            Err(e) => return #fp_ts::ret(Err(e)),
         };
     });
     ctx.push(quote! { #tmp });

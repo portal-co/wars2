@@ -1,3 +1,4 @@
+use syn::parse_quote;
 use wasm_encoder::{
     CodeSection, ExportKind, ExportSection, Function, FunctionSection, Instruction, Module,
     TypeSection, ValType, GlobalSection, GlobalType, MemorySection, MemoryType, MemArg, ConstExpr,
@@ -131,13 +132,13 @@ fn main() -> anyhow::Result<()> {
 
     // Waffle backend
     let opts_waffle = core.clone().inflate::<LegacyPortalWaffleBackend>();
-    let generated_waffle = quote! { #opts_waffle };
-    fs::write(out_dir.join("generated_waffle.rs"), generated_waffle.to_string())?;
+    let generated_waffle = parse_quote! { #opts_waffle };
+    fs::write(out_dir.join("generated_waffle.rs"), prettyplease::unparse(&generated_waffle))?;
 
     // Wasmparser backend
     let opts_wp = core.inflate::<WasmparserBackend>();
-    let generated_wp = quote! { #opts_wp };
-    fs::write(out_dir.join("generated_wp.rs"), generated_wp.to_string())?;
+    let generated_wp = parse_quote! { #opts_wp };
+    fs::write(out_dir.join("generated_wp.rs"), prettyplease::unparse(&generated_wp))?;
 
     println!("cargo:rerun-if-changed=build.rs");
     Ok(())
