@@ -24,9 +24,10 @@ pub(crate) fn fp(opts: &Opts<'_>) -> TokenStream {
     crate::shared::fp(&opts.core)
 }
 pub(crate) fn host_tpit(opts: &Opts<'_>) -> TokenStream {
+    let core_ts = crate::shared::core(&opts.core);
     match opts.core.roots.get("tpit_rt") {
         None => quote! {
-            ::core::convert::Infallible
+            #core_ts::convert::Infallible
         },
         Some(r) => quote! {
             #r::Tpit<()>
@@ -854,7 +855,7 @@ fn render_term(
                     let v = format_ident!("{v}");
                     quote! { #fp_ts::cast::<_,_,C>(#v) }
                 }
-                None => quote! { ::core::default::Default::default() },
+                None => quote! { #root::_rexport::core::default::Default::default() },
             });
             quote! {
                 return #fp_ts::ret(Ok::<_, C::Error>(#root::_rexport::tuple_list::tuple_list!(#(#values),*)))
@@ -1544,10 +1545,10 @@ pub(crate) fn go(
         }
         impl<Target: #name + ?Sized> #root::Traverse<Target> for #data<Target>{
             fn traverse<'a>(&'a self) -> #alloc_ts::boxed::Box<dyn Iterator<Item = &'a Target::ExternRef> + 'a>{
-                return #alloc_ts::boxed::Box::new(::core::iter::empty()#(.chain(#traverse_chains))*);
+                return #alloc_ts::boxed::Box::new(#root::_rexport::core::iter::empty()#(.chain(#traverse_chains))*);
             }
             fn traverse_mut<'a>(&'a mut self) -> #alloc_ts::boxed::Box<dyn Iterator<Item = &'a mut Target::ExternRef> + 'a>{
-                return #alloc_ts::boxed::Box::new(::core::iter::empty()#(.chain(#traverse_mut_chains))*);
+                return #alloc_ts::boxed::Box::new(#root::_rexport::core::iter::empty()#(.chain(#traverse_mut_chains))*);
             }
         }
         pub trait #name: #fp_ts::CtxSpec<ExternRef = Self::_ExternRef, Error = Self::_Error> #async_send_sync #(#plugin_bounds)* {

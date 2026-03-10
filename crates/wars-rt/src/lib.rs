@@ -196,6 +196,7 @@ pub mod _rexport {
     pub use tramp;
     pub use tuple_list;
     pub extern crate alloc;
+    pub use core;
     pub use core::error::Error;
 }
 macro_rules! int_ty{

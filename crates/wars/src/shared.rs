@@ -36,6 +36,12 @@ pub(crate) fn alloc(core: &OptsCore<'_>) -> TokenStream {
     quote! { #p::_rexport::alloc }
 }
 
+/// Path to `wars_rt::_rexport::core`.
+pub(crate) fn core(core: &OptsCore<'_>) -> TokenStream {
+    let p = core.crate_path.clone();
+    quote! { #p::_rexport::core }
+}
+
 /// Path to `wars_rt::func` or `wars_rt::func::unsync` depending on
 /// `Flags::ASYNC`.
 pub(crate) fn fp(core: &OptsCore<'_>) -> TokenStream {
@@ -76,16 +82,17 @@ pub(crate) trait WasmTy: Copy {
 /// `quote!{C}`).
 pub(crate) fn render_ty<T: WasmTy>(core: &OptsCore<'_>, ctx: &TokenStream, ty: T) -> TokenStream {
     let fp_ts = fp(core);
+    let core_ts = self::core(core);
     if ty.is_i32() {
-        quote! { u32 }
+        quote! { #core_ts::primitive::u32 }
     } else if ty.is_i64() {
-        quote! { u64 }
+        quote! { #core_ts::primitive::u64 }
     } else if ty.is_f32() {
-        quote! { f32 }
+        quote! { #core_ts::primitive::f32 }
     } else if ty.is_f64() {
-        quote! { f64 }
+        quote! { #core_ts::primitive::f64 }
     } else if ty.is_v128() {
-        quote! { u128 }
+        quote! { #core_ts::primitive::u128 }
     } else {
         // All reference types fall back to Value<C>.
         quote! { #fp_ts::Value<#ctx> }
@@ -205,6 +212,7 @@ pub(crate) fn render_export<T: WasmTy>(
         .map(|(i, _)| format_ident!("p{i}"))
         .collect();
     let returns: Vec<_> = sig.returns.iter().map(|t| render_ty(core, &ctx, *t)).collect();
+    let core_ts = self::core(core);
     if core.flags.contains(Flags::ASYNC) {
         quote! {
             fn #name<'a>(
@@ -212,7 +220,7 @@ pub(crate) fn render_export<T: WasmTy>(
                 #root::_rexport::tuple_list::tuple_list!(#(#param_ids),*):
                     #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)
             ) -> #root::func::unsync::AsyncRec<'a,
-                    Result<
+                    #core_ts::result::Result<
                         #root::_rexport::tuple_list::tuple_list_type!(#(#returns),*), Self::Error>>
             where Self: 'static {
                 return #root::func::unsync::AsyncRec::wrap(
@@ -227,7 +235,7 @@ pub(crate) fn render_export<T: WasmTy>(
                 #root::_rexport::tuple_list::tuple_list!(#(#param_ids),*):
                     #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)
             ) -> #root::_rexport::tramp::BorrowRec<'a,
-                    Result<
+                    #core_ts::result::Result<
                         #root::_rexport::tuple_list::tuple_list_type!(#(#returns),*), Self::Error>>
             where Self: 'static {
                 return #wrapped(self, #root::_rexport::tuple_list::tuple_list!(#(#param_ids),*));
@@ -243,6 +251,7 @@ pub(crate) fn render_self_sig_import<T: WasmTy>(
     sig: FuncSig<'_, T>,
 ) -> TokenStream {
     let root = core.crate_path.clone();
+    let core_ts = self::core(core);
     let ctx = quote! { Self };
     let params2: Vec<_> = sig.params.iter().map(|t| render_ty(core, &ctx, *t)).collect();
     let returns: Vec<_> = sig.returns.iter().map(|t| render_ty(core, &ctx, *t)).collect();
@@ -252,7 +261,7 @@ pub(crate) fn render_self_sig_import<T: WasmTy>(
                 self: &'a mut Self,
                 imp: #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)
             ) -> #root::func::unsync::AsyncRec<'a,
-                    Result<
+                    #core_ts::result::Result<
                         #root::_rexport::tuple_list::tuple_list_type!(#(#returns),*), Self::Error>>
             where Self: 'static;
         }
@@ -262,7 +271,7 @@ pub(crate) fn render_self_sig_import<T: WasmTy>(
                 self: &'a mut Self,
                 imp: #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)
             ) -> #root::_rexport::tramp::BorrowRec<'a,
-                    Result<
+                    #core_ts::result::Result<
                         #root::_rexport::tuple_list::tuple_list_type!(#(#returns),*), Self::Error>>
             where Self: 'static;
         }

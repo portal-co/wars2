@@ -723,7 +723,7 @@ fn emit(core: &OptsCore<'_>, m: &ParsedModule) -> anyhow::Result<TokenStream> {
                 &'a self,
             ) -> #alloc_ts::boxed::Box<dyn Iterator<Item = &'a Target::ExternRef> + 'a> {
                 #alloc_ts::boxed::Box::new(
-                    ::core::iter::empty()
+                    #root::_rexport::core::iter::empty()
                     #(#traverse_chain)*
                 )
             }
@@ -731,7 +731,7 @@ fn emit(core: &OptsCore<'_>, m: &ParsedModule) -> anyhow::Result<TokenStream> {
                 &'a mut self,
             ) -> #alloc_ts::boxed::Box<dyn Iterator<Item = &'a mut Target::ExternRef> + 'a> {
                 #alloc_ts::boxed::Box::new(
-                    ::core::iter::empty()
+                    #root::_rexport::core::iter::empty()
                     #(#traverse_mut_chain)*
                 )
             }
