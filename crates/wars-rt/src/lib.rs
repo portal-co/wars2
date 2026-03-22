@@ -3,15 +3,15 @@ extern crate alloc;
 pub use core::convert::Infallible;
 pub use either::Either;
 pub mod func;
-pub mod wasix;
 #[cfg(feature = "dumpster")]
 pub mod gc;
+pub mod wasix;
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use core::{error::Error, iter::empty};
-#[cfg(feature = "std")]
-pub use std::sync::Mutex;
 #[cfg(not(feature = "std"))]
 pub use spin::Mutex;
+#[cfg(feature = "std")]
+pub use std::sync::Mutex;
 
 pub trait Err: Into<anyhow::Error> {}
 impl<T: Into<anyhow::Error>> Err for T {}
@@ -67,6 +67,15 @@ impl<C: CtxSpec> Traverse<C> for u64 {
     }
 }
 pub trait Memory<E> {
+    fn read2(
+        &self,
+        a: u64,
+        s: u64,
+        handle: &mut (dyn FnMut(&[u8]) -> Result<(), E> + '_),
+    ) -> Result<(), E> {
+        let r = self.read(a, s)?;
+        handle(r.as_ref().as_ref())
+    }
     fn read<'a>(&'a self, a: u64, s: u64) -> Result<Box<dyn AsRef<[u8]> + 'a>, E>;
     fn write(&mut self, a: u64, x: &[u8]) -> Result<(), E>;
     fn size(&self) -> Result<u64, E>;
@@ -100,6 +109,15 @@ pub mod ic {
     }
 }
 impl<E> Memory<E> for Vec<u8> {
+    fn read2(
+        &self,
+        a: u64,
+        s: u64,
+        handle: &mut (dyn FnMut(&[u8]) -> Result<(), E> + '_),
+    ) -> Result<(), E> {
+        let r = &self[(a as usize)..][..(s as usize)];
+        handle(r)
+    }
     fn read<'a>(&'a self, a: u64, s: u64) -> Result<Box<dyn AsRef<[u8]> + 'a>, E> {
         Ok(Box::new(&self[(a as usize)..][..(s as usize)]))
     }
@@ -116,6 +134,14 @@ impl<E> Memory<E> for Vec<u8> {
     }
 }
 impl<T: Memory<E> + ?Sized, E> Memory<E> for Box<T> {
+    fn read2(
+        &self,
+        a: u64,
+        s: u64,
+        handle: &mut (dyn FnMut(&[u8]) -> Result<(), E> + '_),
+    ) -> Result<(), E> {
+        self.as_ref().read2(a, s, handle)
+    }
     fn read<'a>(&'a self, a: u64, s: u64) -> Result<Box<dyn AsRef<[u8]> + 'a>, E> {
         self.as_ref().read(a, s)
     }
@@ -131,6 +157,15 @@ impl<T: Memory<E> + ?Sized, E> Memory<E> for Box<T> {
 }
 #[cfg(feature = "std")]
 impl<T: Memory<E>, E> Memory<E> for Arc<std::sync::Mutex<T>> {
+    fn read2(
+        &self,
+        a: u64,
+        s: u64,
+        handle: &mut (dyn FnMut(&[u8]) -> Result<(), E> + '_),
+    ) -> Result<(), E> {
+        let l = self.lock().unwrap();
+        return l.read2(a, s, handle);
+    }
     fn read<'a>(&'a self, a: u64, s: u64) -> Result<Box<dyn AsRef<[u8]> + 'a>, E> {
         let l = self.lock().unwrap();
         let r = l.read(a, s)?;
@@ -149,8 +184,45 @@ impl<T: Memory<E>, E> Memory<E> for Arc<std::sync::Mutex<T>> {
         return l.grow(x);
     }
 }
-#[cfg(not(feature = "std"))]
+#[cfg(feature = "std")]
+impl<T: Memory<E>, E> Memory<E> for Arc<std::sync::RwLock<T>> {
+    fn read2(
+        &self,
+        a: u64,
+        s: u64,
+        handle: &mut (dyn FnMut(&[u8]) -> Result<(), E> + '_),
+    ) -> Result<(), E> {
+        let l = std::sync::RwLock::read(&self).unwrap();
+        return l.read2(a, s, handle);
+    }
+    fn read<'a>(&'a self, a: u64, s: u64) -> Result<Box<dyn AsRef<[u8]> + 'a>, E> {
+        let l = std::sync::RwLock::read(&self).unwrap();
+        let r = l.read(a, s)?;
+        return Ok(Box::new(r.as_ref().as_ref().to_vec()));
+    }
+    fn write(&mut self, a: u64, x: &[u8]) -> Result<(), E> {
+        let mut l = std::sync::RwLock::write(&self).unwrap();
+        return l.write(a, x);
+    }
+    fn size(&self) -> Result<u64, E> {
+        let l = std::sync::RwLock::read(&self).unwrap();
+        return l.size();
+    }
+    fn grow(&mut self, x: u64) -> Result<(), E> {
+        let mut l = std::sync::RwLock::write(&self).unwrap();
+        return l.grow(x);
+    }
+}
 impl<T: Memory<E>, E> Memory<E> for Arc<spin::Mutex<T>> {
+    fn read2(
+        &self,
+        a: u64,
+        s: u64,
+        handle: &mut (dyn FnMut(&[u8]) -> Result<(), E> + '_),
+    ) -> Result<(), E> {
+        let l = self.lock();
+        return l.read2(a, s, handle);
+    }
     fn read<'a>(&'a self, a: u64, s: u64) -> Result<Box<dyn AsRef<[u8]> + 'a>, E> {
         let l = self.lock();
         let r = l.read(a, s)?;
@@ -166,6 +238,34 @@ impl<T: Memory<E>, E> Memory<E> for Arc<spin::Mutex<T>> {
     }
     fn grow(&mut self, x: u64) -> Result<(), E> {
         let mut l = self.lock();
+        return l.grow(x);
+    }
+}
+impl<T: Memory<E>, E> Memory<E> for Arc<spin::RwLock<T>> {
+    fn read2(
+        &self,
+        a: u64,
+        s: u64,
+        handle: &mut (dyn FnMut(&[u8]) -> Result<(), E> + '_),
+    ) -> Result<(), E> {
+        let l = spin::RwLock::read(&self);
+        return l.read2(a, s, handle);
+    }
+    fn read<'a>(&'a self, a: u64, s: u64) -> Result<Box<dyn AsRef<[u8]> + 'a>, E> {
+        let l = spin::RwLock::read(&self);
+        let r = l.read(a, s)?;
+        return Ok(Box::new(r.as_ref().as_ref().to_vec()));
+    }
+    fn write(&mut self, a: u64, x: &[u8]) -> Result<(), E> {
+        let mut l = spin::RwLock::write(&self);
+        return l.write(a, x);
+    }
+    fn size(&self) -> Result<u64, E> {
+        let l = spin::RwLock::read(&self);
+        return l.size();
+    }
+    fn grow(&mut self, x: u64) -> Result<(), E> {
+        let mut l = spin::RwLock::write(&self);
         return l.grow(x);
     }
 }
@@ -339,8 +439,12 @@ macro_rules! int_ty{
             }
             //LOADS and STORES
             pub fn [<$p load>]<T: TryInto<u64>, M: Memory<E> + ?Sized,E>(a: &mut M, b: T) -> Result<tuple_list::tuple_list_type!($int), E> where T::Error: Into<anyhow::Error> + Send + Sync + 'static {
-                let r = a.read(b.try_into()/* .map_err(|e| E::from(e.into()))? */ .map_err(|_|()).expect("to work"), core::mem::size_of::<$int>().try_into().unwrap())?;
-                Ok(tuple_list::tuple_list!($int::from_ne_bytes(r.as_ref().as_ref().try_into().unwrap())))
+                let mut r = 0;
+                 a.read2(b.try_into()/* .map_err(|e| E::from(e.into()))? */ .map_err(|_|()).expect("to work"), core::mem::size_of::<$int>().try_into().unwrap(),&mut |a|{
+                    r = $int::from_ne_bytes(a.try_into().unwrap());
+                    Ok(())
+                 })?;
+                Ok(tuple_list::tuple_list!(r))
             }
             pub fn [<$p store>]<T: TryInto<u64>, M: Memory<E> + ?Sized,E>(a: &mut M, b: T, c: $int) -> Result<(), E> where T::Error: Into<anyhow::Error> + Send + Sync + 'static {
                 a.write(b.try_into()/* .map_err(|e| E::from(e.into()))? */ .map_err(|_|()).expect("to work"), &c.to_ne_bytes())?;
@@ -348,12 +452,21 @@ macro_rules! int_ty{
             }
             //8 BIT
             pub fn [<$p load8u>]<T: TryInto<u64>, M: Memory<E> + ?Sized,E>(a: &mut M, b: T) -> Result<tuple_list::tuple_list_type!($int), E> where T::Error: Into<anyhow::Error> + Send + Sync + 'static {
-                let r = a.read(b.try_into()/* .map_err(|e| E::from(e.into()))? */ .map_err(|_|()).expect("to work"), 1)?.as_ref().as_ref()[0];
-                Ok(tuple_list::tuple_list!(r as $int))
+                let mut r = 0;
+                 a.read2(b.try_into()/* .map_err(|e| E::from(e.into()))? */ .map_err(|_|()).expect("to work"), 1,&mut |a|{
+                    r = a[0] as $int;
+                    Ok(())
+                 })?;
+                Ok(tuple_list::tuple_list!(r))
             }
             pub fn [<$p load8s>]<T: TryInto<u64>, M: Memory<E> + ?Sized,E>(a: &mut M, b: T) -> Result<tuple_list::tuple_list_type!($int), E> where T::Error: Into<anyhow::Error> + Send + Sync + 'static {
-                let r = a.read(b.try_into()/* .map_err(|e| E::from(e.into()))? */ .map_err(|_|()).expect("to work"), 1)?.as_ref().as_ref()[0];
-                Ok(tuple_list::tuple_list!(r as i8 as $p as $int))
+                let mut r = 0;
+                 a.read2(b.try_into()/* .map_err(|e| E::from(e.into()))? */ .map_err(|_|()).expect("to work"), 1,&mut |a|{
+                    r = a[0] as i8 as $p as $int;
+                    Ok(())
+                 })?;
+                Ok(tuple_list::tuple_list!(r))
+
             }
             pub fn [<$p store8>]<T: TryInto<u64>, M: Memory<E> + ?Sized,E>(a: &mut M, b: T, c: $int) -> Result<(), E> where T::Error: Into<anyhow::Error> + Send + Sync + 'static {
                 a.write(b.try_into()/* .map_err(|e| E::from(e.into()))? */ .map_err(|_|()).expect("to work"), &[(c & 0xff) as u8])?;
@@ -361,13 +474,19 @@ macro_rules! int_ty{
             }
             //16 BIT
             pub fn [<$p load16u>]<T: TryInto<u64>, M: Memory<E> + ?Sized,E>(a: &mut M, b: T) -> Result<tuple_list::tuple_list_type!($int), E> where T::Error: Into<anyhow::Error> + Send + Sync + 'static {
-                let r = a.read(b.try_into()/* .map_err(|e| E::from(e.into()))? */ .map_err(|_|()).expect("to work"), 2)?;
-                let r = u16::from_ne_bytes(r.as_ref().as_ref().try_into().unwrap());
-                Ok(tuple_list::tuple_list!(r as $int))
+                let mut r = 0;
+                 a.read2(b.try_into()/* .map_err(|e| E::from(e.into()))? */ .map_err(|_|()).expect("to work"), 2,&mut |a|{
+                    r = u16::from_ne_bytes(a.try_into().unwrap()) as $int;
+                    Ok(())
+                 })?;
+                Ok(tuple_list::tuple_list!(r))
             }
             pub fn [<$p load16s>]<T: TryInto<u64>, M: Memory<E> + ?Sized,E>(a: &mut M, b: T) -> Result<tuple_list::tuple_list_type!($int), E> where T::Error: Into<anyhow::Error> + Send + Sync + 'static {
-                let r = a.read(b.try_into()/* .map_err(|e| E::from(e.into()))? */ .map_err(|_|()).expect("to work"), 2)?;
-                let r = u16::from_ne_bytes(r.as_ref().as_ref().try_into().unwrap());
+                let mut r = 0;
+                 a.read2(b.try_into()/* .map_err(|e| E::from(e.into()))? */ .map_err(|_|()).expect("to work"), 2,&mut |a|{
+                    r = u16::from_ne_bytes(a.try_into().unwrap()) as i16 as $p as $int;
+                    Ok(())
+                 })?;
                 Ok(tuple_list::tuple_list!(r as i16 as $p as $int))
             }
             pub fn [<$p store16>]<T: TryInto<u64>, M: Memory<E> + ?Sized,E>(a: &mut M, b: T, c: $int) -> Result<(), E> where T::Error: Into<anyhow::Error> + Send + Sync + 'static {
@@ -376,13 +495,19 @@ macro_rules! int_ty{
             }
             //32 BIT
             pub fn [<$p load32u>]<T: TryInto<u64>, M: Memory<E> + ?Sized,E>(a: &mut M, b: T) -> Result<tuple_list::tuple_list_type!($int), E> where T::Error: Into<anyhow::Error> + Send + Sync + 'static {
-                let r = a.read(b.try_into()/* .map_err(|e| E::from(e.into()))? */ .map_err(|_|()).expect("to work"), 4)?;
-                let r = u32::from_ne_bytes(r.as_ref().as_ref().try_into().unwrap());
-                Ok(tuple_list::tuple_list!(r as $int))
+                let mut r = 0;
+                 a.read2(b.try_into()/* .map_err(|e| E::from(e.into()))? */ .map_err(|_|()).expect("to work"), 4,&mut |a|{
+                    r = u32::from_ne_bytes(a.try_into().unwrap()) as $int;
+                    Ok(())
+                 })?;
+                Ok(tuple_list::tuple_list!(r))
             }
             pub fn [<$p load32s>]<T: TryInto<u64>, M: Memory<E> + ?Sized,E>(a: &mut M, b: T) -> Result<tuple_list::tuple_list_type!($int), E> where T::Error: Into<anyhow::Error> + Send + Sync + 'static {
-                let r = a.read(b.try_into()/* .map_err(|e| E::from(e.into()))? */ .map_err(|_|()).expect("to work"), 4)?;
-                let r = u32::from_ne_bytes(r.as_ref().as_ref().try_into().unwrap());
+                let mut r = 0;
+                 a.read2(b.try_into()/* .map_err(|e| E::from(e.into()))? */ .map_err(|_|()).expect("to work"), 4,&mut |a|{
+                    r = u32::from_ne_bytes(a.try_into().unwrap()) as i32 as $p as $int;
+                    Ok(())
+                 })?;
                 Ok(tuple_list::tuple_list!(r as i32 as $p as $int))
             }
             pub fn [<$p store32>]<T: TryInto<u64>, M: Memory<E> + ?Sized,E>(a: &mut M, b: T, c: $int) -> Result<(), E> where T::Error: Into<anyhow::Error> + Send + Sync + 'static {
@@ -394,7 +519,7 @@ macro_rules! int_ty{
 }
 int_ty!(u32 => i32);
 int_ty!(u64 => i64);
-pub fn select<T,E>(u: u32, t: T, t2: T) -> Result<tuple_list::tuple_list_type!(T), E> {
+pub fn select<T, E>(u: u32, t: T, t2: T) -> Result<tuple_list::tuple_list_type!(T), E> {
     Ok(tuple_list::tuple_list!(if u != 0 { t } else { t2 }))
 }
 pub fn i32wrapi64<E>(a: u64) -> Result<tuple_list::tuple_list_type!(u32), E> {
