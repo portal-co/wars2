@@ -1,5 +1,6 @@
 #![no_std]
 extern crate alloc;
+
 pub use core::convert::Infallible;
 pub use either::Either;
 pub mod func;
@@ -533,6 +534,6 @@ pub fn i64extendi32s<E>(a: u32) -> Result<tuple_list::tuple_list_type!(u64), E> 
 }
 pub fn i64truncf64s<E>(a: f64) -> Result<tuple_list::tuple_list_type!(u64), E> {
     Ok(tuple_list::tuple_list!(
-        unsafe { a.trunc().to_int_unchecked::<i64>() } as u64
+        unsafe { libm::trunc(a).to_int_unchecked::<i64>() } as u64
     ))
 }
