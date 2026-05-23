@@ -1233,7 +1233,7 @@ impl<'a, X: AsRef<[u8]>> OptsLt<'a, X, LegacyPortalWaffleBackend> {
     }
 }
 
-pub(crate) fn go(
+pub fn go(
     opts: &OptsLt<'_, Module<'static>, LegacyPortalWaffleBackend>,
 ) -> anyhow::Result<proc_macro2::TokenStream> {
     let mut opts = opts.clone();

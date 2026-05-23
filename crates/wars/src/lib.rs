@@ -102,3 +102,7 @@ pub(crate) mod r#impl;
 #[cfg(feature = "wasmparser")]
 pub(crate) mod new_backend;
 pub(crate) mod shared;
+#[cfg(feature = "wasmparser")]
+pub use new_backend::{go as wasmparser_compile};
+#[cfg(feature = "waffle")]
+pub use r#impl::{go as waffle_compile};

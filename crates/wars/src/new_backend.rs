@@ -375,7 +375,7 @@ fn ref_expr_func_idx(reader: wasmparser::BinaryReader<'_>) -> anyhow::Result<u32
 
 type Opts<'a> = OptsLt<'a, &'a [u8], WasmparserBackend>;
 
-pub(crate) fn go(opts: &Opts<'_>) -> anyhow::Result<TokenStream> {
+pub fn go(opts: &Opts<'_>) -> anyhow::Result<TokenStream> {
     let m = ParsedModule::parse(opts.module)?;
     emit(&opts.core, &m)
 }
