@@ -74,6 +74,7 @@ pub struct OptsCore<'a> {
     pub data: BTreeMap<Ident, TokenStream>,
     pub roots: BTreeMap<String, TokenStream>,
     pub plugins: Vec<Arc<dyn Plugin + 'a>>,
+    pub chunk_size: Option<usize>,
 }
 impl<'a> OptsCore<'a> {
     pub fn inflate<K: Backend>(self) -> OptsLt<'a, &'a [u8], K> {

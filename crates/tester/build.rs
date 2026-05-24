@@ -128,17 +128,24 @@ fn main() -> anyhow::Result<()> {
         data,
         roots: Default::default(),
         plugins: vec![],
+        chunk_size: None,
     };
 
-    // Waffle backend
+    // Waffle backend (no chunking)
     let opts_waffle = core.clone().inflate::<LegacyPortalWaffleBackend>();
     let generated_waffle = parse_quote! { #opts_waffle };
     fs::write(out_dir.join("generated_waffle.rs"), prettyplease::unparse(&generated_waffle))?;
 
-    // Wasmparser backend
-    let opts_wp = core.inflate::<WasmparserBackend>();
+    // Wasmparser backend (no chunking)
+    let opts_wp = core.clone().inflate::<WasmparserBackend>();
     let generated_wp = parse_quote! { #opts_wp };
     fs::write(out_dir.join("generated_wp.rs"), prettyplease::unparse(&generated_wp))?;
+
+    // Wasmparser backend (chunked, chunk_size=3 — forces cross-chunk calls)
+    let chunked_core = OptsCore { chunk_size: Some(3), ..core };
+    let opts_wp_chunked = chunked_core.inflate::<WasmparserBackend>();
+    let generated_wp_chunked = parse_quote! { #opts_wp_chunked };
+    fs::write(out_dir.join("generated_wp_chunked.rs"), prettyplease::unparse(&generated_wp_chunked))?;
 
     println!("cargo:rerun-if-changed=build.rs");
     Ok(())

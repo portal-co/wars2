@@ -375,6 +375,41 @@ fn ref_expr_func_idx(reader: wasmparser::BinaryReader<'_>) -> anyhow::Result<u32
 
 type Opts<'a> = OptsLt<'a, &'a [u8], WasmparserBackend>;
 
+// ─── Chunk context ────────────────────────────────────────────────────────────
+
+struct ChunkCtx {
+    /// func_chunk[i] = chunk index for func i; usize::MAX for imports.
+    func_chunk: Vec<usize>,
+    /// Total number of chunks.
+    n_chunks: usize,
+    /// Number of imported functions.
+    n_func_imports: usize,
+}
+
+impl ChunkCtx {
+    fn build(n_imports: usize, total: usize, chunk_size: usize) -> Self {
+        let mut func_chunk = vec![usize::MAX; total];
+        let n_defined = total.saturating_sub(n_imports);
+        let n_chunks = if n_defined == 0 {
+            0
+        } else {
+            (n_defined + chunk_size - 1) / chunk_size
+        };
+        for def_idx in 0..n_defined {
+            func_chunk[n_imports + def_idx] = def_idx / chunk_size;
+        }
+        ChunkCtx { func_chunk, n_chunks, n_func_imports: n_imports }
+    }
+
+    fn chunk_of(&self, func_idx: u32) -> usize {
+        self.func_chunk[func_idx as usize]
+    }
+
+    fn is_import(&self, func_idx: u32) -> bool {
+        self.func_chunk[func_idx as usize] == usize::MAX
+    }
+}
+
 pub fn go(opts: &Opts<'_>) -> anyhow::Result<TokenStream> {
     let m = ParsedModule::parse(opts.module)?;
     emit(&opts.core, &m)
@@ -387,6 +422,12 @@ fn emit(core: &OptsCore<'_>, m: &ParsedModule) -> anyhow::Result<TokenStream> {
     let name = core.name.clone();
     let data_ty = format_ident!("{}Data", name);
     let impl_trait = format_ident!("{}Impl", name);
+
+    // Build chunk context early — needed by export delegate generation and table element refs.
+    let total_funcs = m.func_type_idx.len() as u32;
+    let chunk_ctx_owned: Option<ChunkCtx> = core.chunk_size.map(|cs| {
+        ChunkCtx::build(m.n_func_imports as usize, total_funcs as usize, cs)
+    });
 
     // ── *Data struct fields ──────────────────────────────────────────────────
     let mut data_fields: Vec<TokenStream> = vec![];   // struct field declarations
@@ -553,7 +594,16 @@ fn emit(core: &OptsCore<'_>, m: &ParsedModule) -> anyhow::Result<TokenStream> {
                 let rust_name = format_ident!("{}", bindname(exp_name));
                 let free_fn = m.fname(func_idx);
                 impl_trait_methods.push(shared::render_self_sig_import(core, rust_name.clone(), sig.as_ref()));
-                blanket_methods.push(shared::render_export(core, rust_name, free_fn, sig.as_ref()));
+                // When chunking, the free fn lives in _chunkN; use a path expression.
+                let blanket = if let Some(ref cctx) = chunk_ctx_owned {
+                    let chunk = cctx.chunk_of(func_idx);
+                    let mod_name = format_ident!("_chunk{}", chunk);
+                    let path = quote! { #mod_name::#free_fn };
+                    shared::render_export_path(core, rust_name, path, sig.as_ref())
+                } else {
+                    shared::render_export(core, rust_name, free_fn, sig.as_ref())
+                };
+                blanket_methods.push(blanket);
             }
             ExternalKind::Table => {
                 let t_idx = *exp_idx;
@@ -643,7 +693,7 @@ fn emit(core: &OptsCore<'_>, m: &ParsedModule) -> anyhow::Result<TokenStream> {
         let offset = elem.offset as usize;
         let pushes = elem.func_indices.iter().enumerate().map(|(slot, &fidx)| {
             let abs = offset + slot;
-            let fun_ref = render_fun_ref(core, m, fidx);
+            let fun_ref = render_fun_ref(core, m, fidx, chunk_ctx_owned.as_ref());
             quote! {
                 while ctx.#t_n().len() <= #abs {
                     ctx.#t_n().push(Default::default());
@@ -658,10 +708,12 @@ fn emit(core: &OptsCore<'_>, m: &ParsedModule) -> anyhow::Result<TokenStream> {
 
     // ── Free functions ───────────────────────────────────────────────────────
     let mut free_fns: Vec<TokenStream> = vec![];
-    let total_funcs = m.func_type_idx.len() as u32;
-    for func_idx in 0..total_funcs {
-        let ts = render_fn(core, m, func_idx)?;
-        free_fns.push(ts);
+    if chunk_ctx_owned.is_none() {
+        // No chunking: emit all functions into the single const block (original behavior).
+        for func_idx in 0..total_funcs {
+            let ts = render_fn(core, m, func_idx, None)?;
+            free_fns.push(ts);
+        }
     }
 
     // init() declaration in the FooImpl trait.
@@ -703,8 +755,8 @@ fn emit(core: &OptsCore<'_>, m: &ParsedModule) -> anyhow::Result<TokenStream> {
         quote! {}
     };
 
-    Ok(quote! {
-        // ── *Data ──────────────────────────────────────────────────────────
+    // ── Common preamble (Data + host trait) ─────────────────────────────────
+    let preamble = quote! {
         pub struct #data_ty<Target: #name + ?Sized> {
             #(#data_fields),*
         }
@@ -737,7 +789,6 @@ fn emit(core: &OptsCore<'_>, m: &ParsedModule) -> anyhow::Result<TokenStream> {
             }
         }
 
-        // ── Host trait ────────────────────────────────────────────────────
         pub trait #name:
             #fp_ts::CtxSpec<ExternRef = Self::_ExternRef, Error = Self::_Error>
             #async_bounds
@@ -747,34 +798,118 @@ fn emit(core: &OptsCore<'_>, m: &ParsedModule) -> anyhow::Result<TokenStream> {
             type _Error: #root::_rexport::Error + 'static;
             #(#trait_methods)*
         }
+    };
 
-        // ── FooImpl trait ─────────────────────────────────────────────────
-        pub trait #impl_trait: #name {
-            #(#impl_trait_methods)*
+    if let Some(cctx) = chunk_ctx_owned {
+        // ── Chunked output ────────────────────────────────────────────────────
+        let mut chunk_mods: Vec<TokenStream> = vec![];
+        let mut chunk_trait_names: Vec<Ident> = vec![];
+
+        for chunk_idx in 0..cctx.n_chunks {
+            let chunk_trait_name = format_ident!("{}Chunk{}", name, chunk_idx);
+            let mod_name = format_ident!("_chunk{}", chunk_idx);
+            chunk_trait_names.push(chunk_trait_name.clone());
+
+            let cctx_ptr: *const ChunkCtx = &cctx;
+            let chunk_ctx_pair = Some((cctx_ptr, chunk_idx));
+
+            // Functions in this chunk.
+            let mut trait_sigs: Vec<TokenStream> = vec![];
+            let mut blanket_delegates: Vec<TokenStream> = vec![];
+            let mut chunk_free_fns: Vec<TokenStream> = vec![];
+
+            for func_idx in (m.n_func_imports..total_funcs)
+                .filter(|&fi| cctx.chunk_of(fi) == chunk_idx)
+            {
+                let sig = m.func_sig(func_idx);
+                let fname = m.fname(func_idx);
+                trait_sigs.push(shared::render_self_sig_import(core, fname.clone(), sig.as_ref()));
+                // Blanket delegate: call the local free fn (same module).
+                blanket_delegates.push(shared::render_export(core, fname.clone(), fname.clone(), sig.as_ref()));
+                // Free function with pub(super) visibility.
+                let fn_ts = render_fn(core, m, func_idx, chunk_ctx_pair)?;
+                chunk_free_fns.push(quote! { pub(super) #fn_ts });
+            }
+
+            chunk_mods.push(quote! {
+                pub mod #mod_name {
+                    use super::*;
+                    pub trait #chunk_trait_name: super::#name {
+                        #(#trait_sigs)*
+                    }
+                    const _: () = {
+                        use #root::Memory;
+                        impl<C: super::#name> #chunk_trait_name for C {
+                            #(#blanket_delegates)*
+                        }
+                    };
+                    #(#chunk_free_fns)*
+                }
+                pub use #mod_name::#chunk_trait_name;
+            });
         }
 
-        // ── Blanket impl + free functions ─────────────────────────────────
-        const _: () = {
-            use #root::Memory;
-            impl<C: #name> #impl_trait for C {
-                #(#blanket_methods)*
-            }
-            #(#free_fns)*
-        };
+        // FooImpl supertrait bounds: Foo + FooChunk0 + FooChunk1 + ...
+        let chunk_super_bounds: Vec<TokenStream> = chunk_trait_names.iter()
+            .map(|n| quote! { + #n })
+            .collect();
 
-        #(#plugin_post)*
-    })
+        Ok(quote! {
+            #preamble
+            #(#chunk_mods)*
+            pub trait #impl_trait: #name #(#chunk_super_bounds)* {
+                #(#impl_trait_methods)*
+            }
+            const _: () = {
+                use #root::Memory;
+                impl<C: #name #(#chunk_super_bounds)*> #impl_trait for C {
+                    #(#blanket_methods)*
+                }
+            };
+            #(#plugin_post)*
+        })
+    } else {
+        // ── Non-chunked output (original behavior) ────────────────────────────
+        Ok(quote! {
+            #preamble
+            pub trait #impl_trait: #name {
+                #(#impl_trait_methods)*
+            }
+            const _: () = {
+                use #root::Memory;
+                impl<C: #name> #impl_trait for C {
+                    #(#blanket_methods)*
+                }
+                #(#free_fns)*
+            };
+            #(#plugin_post)*
+        })
+    }
 }
 
 // ─── Function reference helper ────────────────────────────────────────────────
 
-fn render_fun_ref(core: &OptsCore<'_>, m: &ParsedModule, func_idx: u32) -> TokenStream {
+fn render_fun_ref(core: &OptsCore<'_>, m: &ParsedModule, func_idx: u32, chunk_ctx: Option<&ChunkCtx>) -> TokenStream {
     let root = core.crate_path.clone();
     let fp_ts = fp(core);
     let sig = m.func_sig(func_idx);
     let ctx_ts = quote! { c };
     let generics = shared::render_generics(core, &ctx_ts, sig.as_ref());
-    let fname = m.fname(func_idx);
+    // When chunking, functions live in _chunkN sub-modules; emit a qualified path.
+    let fname: TokenStream = if let Some(cctx) = chunk_ctx {
+        if m.is_defined(func_idx) {
+            let chunk = cctx.chunk_of(func_idx);
+            let mod_name = format_ident!("_chunk{}", chunk);
+            let raw = m.fname(func_idx);
+            quote! { #mod_name::#raw }
+        } else {
+            let raw = m.fname(func_idx);
+            quote! { #raw }
+        }
+    } else {
+        let raw = m.fname(func_idx);
+        quote! { #raw }
+    };
     if core.flags.contains(Flags::ASYNC) {
         quote! {
             #fp_ts::da::<#generics, C, _>(|ctx, arg| {
@@ -792,7 +927,7 @@ fn render_fun_ref(core: &OptsCore<'_>, m: &ParsedModule, func_idx: u32) -> Token
 
 // ─── Function body emission ───────────────────────────────────────────────────
 
-fn render_fn(core: &OptsCore<'_>, m: &ParsedModule, func_idx: u32) -> anyhow::Result<TokenStream> {
+fn render_fn(core: &OptsCore<'_>, m: &ParsedModule, func_idx: u32, chunk_ctx: Option<(*const ChunkCtx, usize)>) -> anyhow::Result<TokenStream> {
     let sig = m.func_sig(func_idx).clone();
     let fname = m.fname(func_idx);
     let sig_ts = shared::render_fn_sig(core, fname.clone(), sig.as_ref());
@@ -869,7 +1004,7 @@ fn render_fn(core: &OptsCore<'_>, m: &ParsedModule, func_idx: u32) -> anyhow::Re
     }
 
     // Now emit the operator stream as structured Rust.
-    let body_ts = emit_body(core, m, func_idx, &local_types, op_bytes)?;
+    let body_ts = emit_body(core, m, func_idx, &local_types, op_bytes, chunk_ctx)?;
 
     let inner = quote! {
         #(#local_decls)*
@@ -916,6 +1051,9 @@ struct EmitCtx<'a> {
     /// Output buffer stack: `out_stack.last_mut()` is where we currently write.
     /// Pushed on Block/Loop/If entry, popped and merged on End/Else.
     out_stack: Vec<Vec<TokenStream>>,
+    /// Chunk context for cross-chunk call path generation. None = no chunking.
+    /// Tuple: (chunk assignment table, index of the chunk currently being emitted).
+    chunk_ctx: Option<(*const ChunkCtx, usize)>,
 }
 
 struct Frame {
@@ -960,6 +1098,7 @@ impl<'a> EmitCtx<'a> {
             label_counter: 0,
             unreachable_depth: 0,
             out_stack: vec![vec![]],
+            chunk_ctx: None,
         }
     }
 
@@ -1051,8 +1190,10 @@ fn emit_body(
     func_idx: u32,
     local_types: &[ValType],
     op_bytes: &[u8],
+    chunk_ctx: Option<(*const ChunkCtx, usize)>,
 ) -> anyhow::Result<TokenStream> {
     let mut ctx = EmitCtx::new(core, m, func_idx, local_types);
+    ctx.chunk_ctx = chunk_ctx;
     let sig = m.func_sig(func_idx);
 
     // Outer frame: the function body itself.
@@ -1401,11 +1542,45 @@ fn process_op(ctx: &mut EmitCtx<'_>, op: Operator<'_>) -> anyhow::Result<()> {
                 args.push(ctx.pop());
             }
             args.reverse();
-            let fname = ctx.m.fname(function_index);
-            let call = if ctx.core.flags.contains(Flags::ASYNC) {
-                quote! { #fname(ctx, #root::_rexport::tuple_list::tuple_list!(#(#fp_ts::cast::<_,_,C>(#args)),*)).await }
+
+            // Resolve call target, taking chunk boundaries into account.
+            // SAFETY: chunk_ctx raw pointer comes from a ChunkCtx that lives
+            // in emit(), which outlives emit_body() and thus this EmitCtx.
+            let call = if let Some((cctx_ptr, cur_chunk)) = ctx.chunk_ctx {
+                let cctx = unsafe { &*cctx_ptr };
+                if cctx.is_import(function_index) {
+                    // Imported function: call ctx method directly (no wrapper fn).
+                    let imp = ctx.m.import_for_func(function_index).unwrap();
+                    let mname = format_ident!("{}_{}", bindname(&imp.module), bindname(&imp.name));
+                    let call_expr = quote! { ctx.#mname(#root::_rexport::tuple_list::tuple_list!(#(#fp_ts::cast::<_,_,C>(#args)),*)) };
+                    if ctx.core.flags.contains(Flags::ASYNC) {
+                        quote! { #call_expr.go().await }
+                    } else {
+                        quote! { #root::_rexport::tramp::tramp(#call_expr) }
+                    }
+                } else {
+                    let target_chunk = cctx.chunk_of(function_index);
+                    let fname: TokenStream = if target_chunk == cur_chunk {
+                        let f = ctx.m.fname(function_index);
+                        quote! { #f }
+                    } else {
+                        let mod_name = format_ident!("_chunk{}", target_chunk);
+                        let f = ctx.m.fname(function_index);
+                        quote! { super::#mod_name::#f }
+                    };
+                    if ctx.core.flags.contains(Flags::ASYNC) {
+                        quote! { #fname(ctx, #root::_rexport::tuple_list::tuple_list!(#(#fp_ts::cast::<_,_,C>(#args)),*)).await }
+                    } else {
+                        quote! { #root::_rexport::tramp::tramp(#fname(ctx, #root::_rexport::tuple_list::tuple_list!(#(#fp_ts::cast::<_,_,C>(#args)),*))) }
+                    }
+                }
             } else {
-                quote! { #root::_rexport::tramp::tramp(#fname(ctx, #root::_rexport::tuple_list::tuple_list!(#(#fp_ts::cast::<_,_,C>(#args)),*))) }
+                let fname = ctx.m.fname(function_index);
+                if ctx.core.flags.contains(Flags::ASYNC) {
+                    quote! { #fname(ctx, #root::_rexport::tuple_list::tuple_list!(#(#fp_ts::cast::<_,_,C>(#args)),*)).await }
+                } else {
+                    quote! { #root::_rexport::tramp::tramp(#fname(ctx, #root::_rexport::tuple_list::tuple_list!(#(#fp_ts::cast::<_,_,C>(#args)),*))) }
+                }
             };
             if sig.returns.is_empty() {
                 ctx.emit(quote! {

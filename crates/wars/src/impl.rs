@@ -1,5 +1,6 @@
 use super::*;
 use relooper::{reloop, BranchMode, ShapedBlock};
+use std::collections::BTreeMap;
 use waffle::{
     cfg::CFGInfo, entity::EntityRef, frontend::ModuleExt, passes, Block, BlockTarget, Export,
     ExportKind, Func, FunctionBody, HeapType, ImportKind, Memory, Module, Operator, Signature,
@@ -313,6 +314,9 @@ pub(crate) fn fname(opts: &Opts<'_>, a: Func) -> Ident {
     format_ident!("{a}_{}", bindname(opts.module.funcs[a].name()))
 }
 pub(crate) fn render_fun_ref(opts: &Opts<'_>, ctx: &TokenStream, x: Func) -> TokenStream {
+    render_fun_ref_cm(opts, ctx, x, None)
+}
+pub(crate) fn render_fun_ref_cm(opts: &Opts<'_>, ctx: &TokenStream, x: Func, chunk_map: Option<&BTreeMap<Func, usize>>) -> TokenStream {
     let root = opts.core.crate_path.clone();
     let fp_ts = fp(opts);
     if x.is_invalid() {
@@ -322,14 +326,27 @@ pub(crate) fn render_fun_ref(opts: &Opts<'_>, ctx: &TokenStream, x: Func) -> Tok
     }
     let generics =
         render_generics(opts, ctx, &opts.module.signatures[opts.module.funcs[x].sig()]);
-    let x = fname(opts, x);
+    // When chunking, the function lives in a _chunkN sub-module; emit a qualified path.
+    let fn_path: TokenStream = if let Some(cm) = chunk_map {
+        if let Some(&chunk) = cm.get(&x) {
+            let mod_name = format_ident!("_chunk{}", chunk);
+            let raw = fname(opts, x);
+            quote! { #mod_name::#raw }
+        } else {
+            let raw = fname(opts, x);
+            quote! { #raw }
+        }
+    } else {
+        let raw = fname(opts, x);
+        quote! { #raw }
+    };
     let r = if opts.core.flags.contains(Flags::ASYNC) {
         quote! { #root::func::unsync::AsyncRec::wrap(res) }
     } else {
         quote! { res }
     };
     quote! {
-        #fp_ts::da::<#generics,C,_>(|ctx,arg|match #x(ctx,arg){
+        #fp_ts::da::<#generics,C,_>(|ctx,arg|match #fn_path(ctx,arg){
             res => #r
         })
     }
@@ -346,6 +363,50 @@ pub(crate) fn render_export(
     opts: &Opts<'_>,
     name: Ident,
     wrapped: Ident,
+    data: &SignatureData,
+) -> TokenStream {
+    let sig = sig_to_funcsig(data);
+    let root = opts.core.crate_path.clone();
+    let ctx = quote! { Self };
+    let params2: Vec<_> = sig.params.iter().map(|x| render_ty(opts, &ctx, *x)).collect();
+    let param_ids: Vec<_> = sig.params.iter().enumerate()
+        .map(|(a, _)| format_ident!("p{a}"))
+        .collect::<Vec<_>>();
+    let returns: Vec<_> = sig.returns.iter().map(|x| render_ty(opts, &ctx, *x)).collect();
+    if opts.core.flags.contains(Flags::ASYNC) {
+        quote! {
+            fn #name<'a>(
+                self: &'a mut Self,
+                #root::_rexport::tuple_list::tuple_list!(#(#param_ids),*):
+                    #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)
+            ) -> #root::func::unsync::AsyncRec<'a,
+                    Result<
+                        #root::_rexport::tuple_list::tuple_list_type!(#(#returns),*), Self::Error>>
+            where Self: 'static {
+                return #root::func::unsync::AsyncRec::wrap(
+                    #wrapped(self, #root::_rexport::tuple_list::tuple_list!(#(#param_ids),*))
+                );
+            }
+        }
+    } else {
+        quote! {
+            fn #name<'a>(
+                self: &'a mut Self,
+                #root::_rexport::tuple_list::tuple_list!(#(#param_ids),*):
+                    #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)
+            ) -> #root::_rexport::tramp::BorrowRec<'a,
+                    Result<
+                        #root::_rexport::tuple_list::tuple_list_type!(#(#returns),*), Self::Error>>
+            where Self: 'static {
+                return #wrapped(self, #root::_rexport::tuple_list::tuple_list!(#(#param_ids),*));
+            }
+        }
+    }
+}
+pub(crate) fn render_export_path(
+    opts: &Opts<'_>,
+    name: Ident,
+    wrapped: TokenStream,
     data: &SignatureData,
 ) -> TokenStream {
     let sig = sig_to_funcsig(data);
@@ -423,6 +484,7 @@ fn render_statements(
     f: &Func,
     b: &FunctionBody,
     stmts: Block,
+    chunk_map: Option<&BTreeMap<Func, usize>>,
 ) -> anyhow::Result<Vec<TokenStream>> {
     let root = opts.core.crate_path.clone();
     let fp_ts = fp(opts);
@@ -447,7 +509,21 @@ fn render_statements(
                     Operator::Call { function_index } => {
                         match opts.module.funcs[*function_index].body(){
                             Some(_) => {
-                                let func = fname(opts, *function_index);
+                                // Resolve cross-chunk path when chunking is active.
+                                let func_ts: TokenStream = if let Some(cm) = chunk_map {
+                                    let cur_chunk = cm.get(f).copied().unwrap_or(0);
+                                    let tgt_chunk = cm.get(function_index).copied().unwrap_or(0);
+                                    let raw = fname(opts, *function_index);
+                                    if tgt_chunk == cur_chunk {
+                                        quote! { #raw }
+                                    } else {
+                                        let mod_name = format_ident!("_chunk{}", tgt_chunk);
+                                        quote! { super::#mod_name::#raw }
+                                    }
+                                } else {
+                                    let raw = fname(opts, *function_index);
+                                    quote! { #raw }
+                                };
                                 let vals = vals.iter().map(|a|format_ident!("{a}"));
                                 let tramp = if opts.core.flags.contains(Flags::ASYNC) {
                                     quote! { x.go().await }
@@ -457,7 +533,7 @@ fn render_statements(
                                 let fp_ts2 = fp(opts);
                                 quote! {
                                     {
-                                        let x = #func(ctx,#root::_rexport::tuple_list::tuple_list!(#(#fp_ts::cast::<_,_,C>(#vals .clone())),*));
+                                        let x = #func_ts(ctx,#root::_rexport::tuple_list::tuple_list!(#(#fp_ts::cast::<_,_,C>(#vals .clone())),*));
                                         match #tramp {
                                             Ok(a) => a,
                                             Err(e) => return #fp_ts2::ret(Err(e))
@@ -962,6 +1038,7 @@ pub(crate) fn render_relooped_block(
     opts: &Opts<'_>,
     f: Func,
     x: &ShapedBlock<Block>,
+    chunk_map: Option<&BTreeMap<Func, usize>>,
 ) -> anyhow::Result<TokenStream> {
     let _root = opts.core.crate_path.clone();
     let b = opts.module.funcs[f].body().unwrap();
@@ -1007,13 +1084,13 @@ pub(crate) fn render_relooped_block(
                 let immediate = s
                     .immediate
                     .as_ref()
-                    .map(|a| render_relooped_block(opts, f, a.as_ref()))
+                    .map(|a| render_relooped_block(opts, f, a.as_ref(), chunk_map))
                     .transpose()?
                     .unwrap_or_default();
                 let next = s
                     .next
                     .as_ref()
-                    .map(|a| render_relooped_block(opts, f, a.as_ref()))
+                    .map(|a| render_relooped_block(opts, f, a.as_ref(), chunk_map))
                     .transpose()?
                     .unwrap_or_default();
                 let term2 = term(
@@ -1029,7 +1106,7 @@ pub(crate) fn render_relooped_block(
                 });
             }
             let _fp_ts = fp(opts);
-            let stmts = render_statements(opts, &f, b, stmts)?;
+            let stmts = render_statements(opts, &f, b, stmts, chunk_map)?;
             let render_target = |k: &BlockTarget| {
                 let fp_ts = fp(opts);
                 let vars = k.args.iter().enumerate().map(|(i, a)| {
@@ -1054,13 +1131,13 @@ pub(crate) fn render_relooped_block(
             let immediate = s
                 .immediate
                 .as_ref()
-                .map(|a| render_relooped_block(opts, f, a.as_ref()))
+                .map(|a| render_relooped_block(opts, f, a.as_ref(), chunk_map))
                 .transpose()?
                 .unwrap_or_default();
             let next = s
                 .next
                 .as_ref()
-                .map(|a| render_relooped_block(opts, f, a.as_ref()))
+                .map(|a| render_relooped_block(opts, f, a.as_ref(), chunk_map))
                 .transpose()?
                 .unwrap_or_default();
             quote! {
@@ -1071,11 +1148,11 @@ pub(crate) fn render_relooped_block(
             }
         }
         ShapedBlock::Loop(l) => {
-            let r = render_relooped_block(opts, f, &l.inner.as_ref())?;
+            let r = render_relooped_block(opts, f, &l.inner.as_ref(), chunk_map)?;
             let next = l
                 .next
                 .as_ref()
-                .map(|a| render_relooped_block(opts, f, a.as_ref()))
+                .map(|a| render_relooped_block(opts, f, a.as_ref(), chunk_map))
                 .transpose()?
                 .unwrap_or_default();
             let l = Lifetime::new(&format!("'l{}", l.loop_id), Span::call_site());
@@ -1100,7 +1177,7 @@ pub(crate) fn render_relooped_block(
                 .iter()
                 .enumerate()
                 .map(|(a, i)| {
-                    let ib = render_relooped_block(opts, f, &i.inner)?;
+                    let ib = render_relooped_block(opts, f, &i.inner, chunk_map)?;
                     let ic = if i.break_after {
                         quote! {}
                     } else {
@@ -1133,7 +1210,7 @@ pub(crate) fn render_relooped_block(
         }
     })
 }
-pub(crate) fn render_fn(opts: &Opts<'_>, f: Func) -> anyhow::Result<TokenStream> {
+pub(crate) fn render_fn(opts: &Opts<'_>, f: Func, chunk_map: Option<&BTreeMap<Func, usize>>) -> anyhow::Result<TokenStream> {
     let name = fname(opts, f);
     let sig = render_fn_sig(
         opts,
@@ -1190,7 +1267,7 @@ pub(crate) fn render_fn(opts: &Opts<'_>, f: Func) -> anyhow::Result<TokenStream>
         })
     });
     let reloop = waffle_func_reloop::go(b);
-    let x = render_relooped_block(opts, f, reloop.as_ref())?;
+    let x = render_relooped_block(opts, f, reloop.as_ref(), chunk_map)?;
     let mut b = quote! {
         let mut cff: usize = 0;
         #(let mut #bpvalues);*;
@@ -1254,12 +1331,30 @@ pub fn go(
     let data = format_ident!("{}Data", opts.core.name);
     let name = opts.core.name.clone();
     let root = opts.core.crate_path.clone();
-    let funcs = opts
-        .module
-        .funcs
-        .iter()
-        .map(|a| render_fn(&opts, a))
-        .collect::<anyhow::Result<Vec<_>>>()?;
+    // Build chunk assignment map: defined Func → chunk index.
+    let chunk_map_owned: Option<BTreeMap<Func, usize>> = opts.core.chunk_size.map(|cs| {
+        let mut map = BTreeMap::new();
+        let mut def_idx: usize = 0;
+        for (func, data) in opts.module.funcs.entries() {
+            if data.body().is_some() {
+                map.insert(func, def_idx / cs);
+                def_idx += 1;
+            }
+        }
+        map
+    });
+    let chunk_map: Option<&BTreeMap<Func, usize>> = chunk_map_owned.as_ref();
+
+    // When not chunking, collect all free functions into a flat vec (original behavior).
+    let funcs: Vec<TokenStream> = if chunk_map.is_none() {
+        opts.module
+            .funcs
+            .iter()
+            .map(|a| render_fn(&opts, a, None))
+            .collect::<anyhow::Result<Vec<_>>>()?
+    } else {
+        vec![]
+    };
     let mut z = vec![];
     let mut fields = vec![];
     let mut sfields = vec![];
@@ -1282,7 +1377,7 @@ pub fn go(
         fields.push(n.clone());
         sfields.push(n.clone());
         if let Some(e) = d.func_elements.as_ref() {
-            let e = e.iter().map(|x| render_fun_ref(&opts, &quote! {C}, *x));
+            let e = e.iter().map(|x| render_fun_ref_cm(&opts, &quote! {C}, *x, chunk_map));
             init.push(if opts.core.flags.contains(Flags::ASYNC) {
                 quote! {
                     #(ctx.data().#n.push(#root::func::unsync::Coe::coe(#e)));*;
@@ -1418,12 +1513,25 @@ pub fn go(
         match &xp.kind {
             ExportKind::Func(f) => {
                 let f = *f;
-                let d = render_export(
-                    &opts,
-                    format_ident!("{}", xp.name),
-                    fname(&opts, f),
-                    &opts.module.signatures[opts.module.funcs[f].sig()],
-                );
+                let d = if let Some(cm) = chunk_map {
+                    // Chunking: delegate to _chunkN::fname path.
+                    let chunk = cm.get(&f).copied().unwrap_or(0);
+                    let mod_name = format_ident!("_chunk{}", chunk);
+                    let raw = fname(&opts, f);
+                    render_export_path(
+                        &opts,
+                        format_ident!("{}", xp.name),
+                        quote! { #mod_name::#raw },
+                        &opts.module.signatures[opts.module.funcs[f].sig()],
+                    )
+                } else {
+                    render_export(
+                        &opts,
+                        format_ident!("{}", xp.name),
+                        fname(&opts, f),
+                        &opts.module.signatures[opts.module.funcs[f].sig()],
+                    )
+                };
                 let e = render_self_sig_import(
                     &opts,
                     format_ident!("{}", xp.name),
@@ -1539,7 +1647,7 @@ pub fn go(
     let traverse_chains = sfields.iter().map(|a| quote!{ #root::Traverse::<Target>::traverse(&self.#a) });
     let traverse_mut_chains = sfields.iter().map(|a| quote!{ #root::Traverse::<Target>::traverse_mut(&mut self.#a) });
     let post_plugins = opts.core.plugins.iter().map(|a| a.post(&opts.core)).collect::<anyhow::Result<Vec<_>>>()?;
-    Ok(quote! {
+    let preamble = quote! {
         pub struct #data<Target: #name + ?Sized>{
             #(#z),*
         }
@@ -1557,22 +1665,6 @@ pub fn go(
             fn data(&mut self) -> &mut #data<Self>;
             #(#fs)*
         }
-        pub trait #name_impl: #name{
-            #(#fs3)*
-            fn init(&mut self) -> Result<(), Self::_Error> where Self: 'static;
-        }
-        const _: () = {
-            use #root::Memory;
-            impl<C: #name> #name_impl for C{
-                #(#fs2)*
-                fn init(&mut self) -> Result<(), Self::_Error> where Self: 'static{
-                    let ctx = self;
-                    #(#init);*;
-                    return Ok(())
-                }
-            }
-            #(#funcs)*
-        };
         impl<Target: #name + ?Sized> Default for #data<Target>{
             fn default() -> Self{
                 Self{
@@ -1587,8 +1679,103 @@ pub fn go(
                 }
             }
         }
-        #(#post_plugins)*
-    })
+    };
+
+    if let Some(cm) = chunk_map {
+        // ── Chunked output ────────────────────────────────────────────────────
+        let n_chunks = cm.values().copied().max().map(|m| m + 1).unwrap_or(0);
+        let mut chunk_mods: Vec<TokenStream> = vec![];
+        let mut chunk_trait_names: Vec<Ident> = vec![];
+
+        for chunk_idx in 0..n_chunks {
+            let chunk_trait_name = format_ident!("{}Chunk{}", name, chunk_idx);
+            let mod_name = format_ident!("_chunk{}", chunk_idx);
+            chunk_trait_names.push(chunk_trait_name.clone());
+
+            let fns_in_chunk: Vec<Func> = opts.module.funcs.iter()
+                .filter(|&f| cm.get(&f).copied() == Some(chunk_idx))
+                .collect();
+
+            let trait_sigs: Vec<TokenStream> = fns_in_chunk.iter().map(|&f| {
+                render_self_sig_import(&opts, fname(&opts, f), &opts.module.signatures[opts.module.funcs[f].sig()])
+            }).collect();
+
+            let blanket_delegates: Vec<TokenStream> = fns_in_chunk.iter().map(|&f| {
+                let n = fname(&opts, f);
+                render_export(&opts, n.clone(), n, &opts.module.signatures[opts.module.funcs[f].sig()])
+            }).collect();
+
+            let chunk_free_fns: Vec<TokenStream> = fns_in_chunk.iter()
+                .map(|&f| {
+                    render_fn(&opts, f, Some(cm)).map(|ts| quote! { pub(super) #ts })
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?;
+
+            chunk_mods.push(quote! {
+                pub mod #mod_name {
+                    use super::*;
+                    pub trait #chunk_trait_name: super::#name {
+                        #(#trait_sigs)*
+                    }
+                    const _: () = {
+                        use #root::Memory;
+                        impl<C: super::#name> #chunk_trait_name for C {
+                            #(#blanket_delegates)*
+                        }
+                    };
+                    #(#chunk_free_fns)*
+                }
+                pub use #mod_name::#chunk_trait_name;
+            });
+        }
+
+        let chunk_super_bounds: Vec<TokenStream> = chunk_trait_names.iter()
+            .map(|n| quote! { + #n })
+            .collect();
+
+        Ok(quote! {
+            #preamble
+            #(#chunk_mods)*
+            pub trait #name_impl: #name #(#chunk_super_bounds)* {
+                #(#fs3)*
+                fn init(&mut self) -> Result<(), Self::_Error> where Self: 'static;
+            }
+            const _: () = {
+                use #root::Memory;
+                impl<C: #name #(#chunk_super_bounds)*> #name_impl for C {
+                    #(#fs2)*
+                    fn init(&mut self) -> Result<(), Self::_Error> where Self: 'static {
+                        let ctx = self;
+                        #(#init);*;
+                        return Ok(())
+                    }
+                }
+            };
+            #(#post_plugins)*
+        })
+    } else {
+        // ── Non-chunked output (original behavior) ────────────────────────────
+        Ok(quote! {
+            #preamble
+            pub trait #name_impl: #name{
+                #(#fs3)*
+                fn init(&mut self) -> Result<(), Self::_Error> where Self: 'static;
+            }
+            const _: () = {
+                use #root::Memory;
+                impl<C: #name> #name_impl for C{
+                    #(#fs2)*
+                    fn init(&mut self) -> Result<(), Self::_Error> where Self: 'static{
+                        let ctx = self;
+                        #(#init);*;
+                        return Ok(())
+                    }
+                }
+                #(#funcs)*
+            };
+            #(#post_plugins)*
+        })
+    }
 }
 impl<'a> OptsLt<'a, Module<'static>, LegacyPortalWaffleBackend> {
     pub(crate) fn to_tokens(&self, tokens: &mut TokenStream) {

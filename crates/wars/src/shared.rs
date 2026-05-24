@@ -244,6 +244,56 @@ pub(crate) fn render_export<T: WasmTy>(
     }
 }
 
+/// Like `render_export` but accepts a `TokenStream` path expression for the
+/// wrapped free function (needed when the function lives in a chunk sub-module).
+pub(crate) fn render_export_path<T: WasmTy>(
+    core: &OptsCore<'_>,
+    name: Ident,
+    wrapped: TokenStream,
+    sig: FuncSig<'_, T>,
+) -> TokenStream {
+    let root = core.crate_path.clone();
+    let ctx = quote! { Self };
+    let params2: Vec<_> = sig.params.iter().map(|t| render_ty(core, &ctx, *t)).collect();
+    let param_ids: Vec<_> = sig
+        .params
+        .iter()
+        .enumerate()
+        .map(|(i, _)| format_ident!("p{i}"))
+        .collect();
+    let returns: Vec<_> = sig.returns.iter().map(|t| render_ty(core, &ctx, *t)).collect();
+    let core_ts = self::core(core);
+    if core.flags.contains(Flags::ASYNC) {
+        quote! {
+            fn #name<'a>(
+                self: &'a mut Self,
+                #root::_rexport::tuple_list::tuple_list!(#(#param_ids),*):
+                    #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)
+            ) -> #root::func::unsync::AsyncRec<'a,
+                    #core_ts::result::Result<
+                        #root::_rexport::tuple_list::tuple_list_type!(#(#returns),*), Self::Error>>
+            where Self: 'static {
+                return #root::func::unsync::AsyncRec::wrap(
+                    #wrapped(self, #root::_rexport::tuple_list::tuple_list!(#(#param_ids),*))
+                );
+            }
+        }
+    } else {
+        quote! {
+            fn #name<'a>(
+                self: &'a mut Self,
+                #root::_rexport::tuple_list::tuple_list!(#(#param_ids),*):
+                    #root::_rexport::tuple_list::tuple_list_type!(#(#params2),*)
+            ) -> #root::_rexport::tramp::BorrowRec<'a,
+                    #core_ts::result::Result<
+                        #root::_rexport::tuple_list::tuple_list_type!(#(#returns),*), Self::Error>>
+            where Self: 'static {
+                return #wrapped(self, #root::_rexport::tuple_list::tuple_list!(#(#param_ids),*));
+            }
+        }
+    }
+}
+
 /// Emit an export method *declaration* (inside the `FooImpl` trait).
 pub(crate) fn render_self_sig_import<T: WasmTy>(
     core: &OptsCore<'_>,
