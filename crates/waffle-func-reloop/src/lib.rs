@@ -13,7 +13,12 @@ pub fn go(b: &FunctionBody) -> Box<ShapedBlock<Block>> {
                         l.succs
                             .iter()
                             .cloned()
-                            .chain(b.blocks.iter().filter(|x| cfg.dominates(*x, k)))
+                            // Only add an edge from a strict dominator to k; a
+                            // block's own dominance of itself is not a real
+                            // CFG edge and previously manufactured spurious
+                            // self-loops (turning straight-line code into
+                            // infinite loops in generated output).
+                            .chain(b.blocks.iter().filter(|x| cfg.dominates(*x, k) && *x != k))
                             .collect(),
                     )
                 })

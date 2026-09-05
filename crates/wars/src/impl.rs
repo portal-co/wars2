@@ -1252,14 +1252,24 @@ pub(crate) fn render_fn(opts: &Opts<'_>, f: Func, chunk_map: Option<&BTreeMap<Fu
     let _cfg = CFGInfo::new(b);
     let bpvalues = b.blocks.entries().flat_map(|(k, d)| {
         d.params.iter().enumerate().map(move |(i, (ty, _))| {
-            let x = match ty {
-                Type::Heap(WithNullable {
-                    nullable,
-                    value: HeapType::Sig { sig_index: _ },
-                }) if !nullable => render_fun_ref(opts, &quote! {C}, Func::invalid()),
-                _ => quote! {
-                    Default::default()
-                },
+            // The entry block's params are the wasm function's own params
+            // (p0, p1, ...); every other block param starts at its default
+            // value and is assigned when a branch targets the block.
+            let x = if k == b.entry {
+                let p = format_ident!("p{i}");
+                quote! { #p }
+            } else {
+                match ty {
+                    Type::Heap(WithNullable {
+                        nullable,
+                        value: HeapType::Sig { sig_index: _ },
+                    }) if !nullable => {
+                        render_fun_ref(opts, &quote! {C}, Func::invalid())
+                    }
+                    _ => quote! {
+                        Default::default()
+                    },
+                }
             };
             let ty_tokens = render_ty(opts, &quote! {C}, *ty);
             let i = format_ident!("{}param{i}", k.to_string());
