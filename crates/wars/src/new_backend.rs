@@ -36,6 +36,8 @@ enum ImportKind {
 struct ParsedModule {
     /// All function types from the type section (by type-section index).
     types: Vec<FuncSigOwned<ValType>>,
+    /// Shared empty signature for indices without a declared type.
+    empty_sig: FuncSigOwned<ValType>,
     /// All imports, in order.
     imports: Vec<ImportEntry>,
     /// type-section index for every function (imports first, then defined).
@@ -289,13 +291,23 @@ impl ParsedModule {
             n_global_imports,
             func_names,
             global_init_vals,
+            empty_sig: FuncSigOwned {
+                params: vec![],
+                returns: vec![],
+            },
         })
     }
 
     /// Resolve a function index to its `FuncSigOwned<ValType>`.
+    /// Falls back to an empty signature for indices with no declared type
+    /// (e.g. refs appearing only in element segments).
     fn func_sig(&self, func_idx: u32) -> &FuncSigOwned<ValType> {
-        let ty_idx = self.func_type_idx[func_idx as usize];
-        &self.types[ty_idx as usize]
+        self.try_func_sig(func_idx).unwrap_or(&self.empty_sig)
+    }
+
+    fn try_func_sig(&self, func_idx: u32) -> Option<&FuncSigOwned<ValType>> {
+        let ty_idx = *self.func_type_idx.get(func_idx as usize)?;
+        self.types.get(ty_idx as usize)
     }
 
     /// Get an import entry for a function index (if the function is imported).

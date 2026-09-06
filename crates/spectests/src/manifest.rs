@@ -27,10 +27,15 @@ impl Manifest {
         }
         let text = std::fs::read_to_string(path)
             .with_context(|| format!("reading manifest {}", path.display()))?;
-        let entries: Vec<Entry> = toml::from_str(&text)
+        #[derive(Deserialize)]
+        struct ManifestFile {
+            #[serde(rename = "entry", default)]
+            entry: Vec<Entry>,
+        }
+        let parsed: ManifestFile = toml::from_str(&text)
             .with_context(|| format!("parsing manifest {}", path.display()))?;
         Ok(Manifest {
-            entries: entries.into_iter().collect(),
+            entries: parsed.entry.into_iter().collect(),
         })
     }
 
@@ -73,22 +78,27 @@ impl Manifest {
     }
 
     /// Check a report against expectations. Returns error text on violation.
+    /// Matching is keyed on (file, idx, backend) only — `reason` is free-form.
     pub fn check(&self, report: &crate::report::Report) -> Result<()> {
+        use std::collections::{HashMap, HashSet};
+        let mut expected: HashSet<(String, usize, String)> = HashSet::new();
+        let mut reasons: HashMap<(String, usize, String), String> = HashMap::new();
+        for e in &self.entries {
+            let k = (e.file.clone(), e.idx, e.backend.clone());
+            expected.insert(k.clone());
+            reasons.entry(k).or_insert_with(|| e.reason.clone());
+        }
+
         let mut unexpected = vec![];
-        let mut stale = self.entries.clone();
+        let mut stale = expected.clone();
 
         for f in &report.files {
             for c in &f.cases {
                 match &c.outcome {
                     crate::report::Outcome::Fail { msg } => {
-                        let entry = Entry {
-                            file: f.file.clone(),
-                            idx: c.index,
-                            backend: f.backend.clone(),
-                            reason: String::new(),
-                        };
-                        if self.entries.contains(&entry) {
-                            stale.remove(&entry);
+                        let k = (f.file.clone(), c.index, f.backend.clone());
+                        if expected.contains(&k) {
+                            stale.remove(&k);
                         } else {
                             unexpected.push(format!(
                                 "  {} [{}] cmd {} (line {}): {}",
@@ -112,7 +122,7 @@ impl Manifest {
             bail!(
                 "{} stale manifest entrie(s) (now passing) — remove them:\n{}",
                 stale.len(),
-                stale.iter().take(30).map(|e| format!("  {} [{}] cmd {}", e.file, e.backend, e.idx)).collect::<Vec<_>>().join("\n")
+                stale.iter().take(30).map(|(f, i, b)| format!("  {} [{}] cmd {}", f, b, i)).collect::<Vec<_>>().join("\n")
             );
         }
         Ok(())
