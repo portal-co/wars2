@@ -335,6 +335,14 @@ fn const_i32_expr(reader: wasmparser::BinaryReader<'_>) -> anyhow::Result<u32> {
 
 /// Extract a constant token stream from a wasm constant expression.
 /// Returns `None` for non-trivial expressions.
+
+/// Heuristic: does the rendered type token stream denote a wars_rt Value
+/// wrapper (reference types render as `Value < C >`)?
+fn is_ref_ty_for_decl(ty: &proc_macro2::TokenStream) -> bool {
+    let s = ty.to_string();
+    s.contains("Value") && s.contains("C")
+}
+
 /// Is this value type a reference type (externref/funcref/etc.)?
 fn is_ref_ty(ty: wasmparser::ValType) -> bool {
     matches!(
@@ -1163,6 +1171,10 @@ struct Frame {
     condition: Option<TokenStream>,
     /// For If/Else: tokens accumulated in the *if* branch before Else was seen.
     if_stmts: Option<Vec<TokenStream>>,
+    /// For If frames: operand stack snapshot at block entry (below the
+    /// block params), so the else branch can be resumed with the same
+    /// param values the then branch started with.
+    stack_snapshot: Vec<TokenStream>,
 }
 
 #[derive(PartialEq, Eq, Clone, Copy)]
@@ -1271,10 +1283,19 @@ impl<'a> EmitCtx<'a> {
     fn root(&self) -> &syn::Path { &self.core.crate_path }
     fn alloc(&self) -> TokenStream { alloc(self.core) }
 
-    /// Collect the final output as a single TokenStream.
+    /// Collect the final output as a single TokenStream. Includes the
+    /// root buffer (function-level declarations) followed by the function
+    /// body buffer.
     fn finish(mut self) -> TokenStream {
-        let stmts = self.out_stack.pop().unwrap_or_default();
-        quote! { #(#stmts)* }
+        let body = self.out_stack.pop().unwrap_or_default();
+        // out_stack[0] is the root buffer where function-level temp
+        // declarations are hoisted; drain any remaining buffers beneath
+        // the body (they should only be the root one).
+        let mut root = Vec::new();
+        for buf in self.out_stack.drain(..) {
+            root.extend(buf);
+        }
+        quote! { #(#root)* #(#body)* }
     }
 }
 
@@ -1300,6 +1321,7 @@ fn emit_body(
         result_tmp: None, // functions return via `return`, not block-result
         result_tmps: vec![],
         stack_height: 0,
+        stack_snapshot: vec![],
         condition: None,
         if_stmts: None,
     });
@@ -1321,6 +1343,29 @@ fn br_target(ctx: &EmitCtx<'_>, depth: usize) -> TokenStream {
     let idx = ctx.frames.len().saturating_sub(depth + 1);
     if idx >= ctx.frames.len() {
         return quote! { return; };
+    }
+    if idx == 0 {
+        // Branch to function level == return the top sig.returns values.
+        let sig = ctx.m.func_sig(ctx.func_idx);
+        let n = sig.returns.len();
+        if n == 0 {
+            let root = ctx.root().clone();
+            return quote! {
+                return #fp_ts::ret(Ok::<_, C::Error>(
+                    #root::_rexport::tuple_list::tuple_list!()
+                ));
+            };
+        }
+        let start = ctx.stack.len().saturating_sub(n);
+        let vals = ctx.stack[start..].to_vec();
+        let root = ctx.root().clone();
+        return quote! {
+            return #fp_ts::ret(Ok::<_, C::Error>(
+                #root::_rexport::tuple_list::tuple_list!(
+                    #(#fp_ts::cast::<_,_,C>(#vals)),*
+                )
+            ));
+        };
     }
     let frame = &ctx.frames[idx];
     let lt = Lifetime::new(&format!("'l{}", frame.label), Span::call_site());
@@ -1368,6 +1413,7 @@ fn process_op(ctx: &mut EmitCtx<'_>, op: Operator<'_>) -> anyhow::Result<()> {
                     result_tmp: None,
                     result_tmps: vec![],
                     stack_height: 0,
+                    stack_snapshot: vec![],
                     condition: None,
                     if_stmts: None,
                 });
@@ -1388,6 +1434,13 @@ fn process_op(ctx: &mut EmitCtx<'_>, op: Operator<'_>) -> anyhow::Result<()> {
                     let frame = ctx.frames.last_mut().expect("else without frame");
                     frame.if_stmts = Some(if_body);
                     frame.kind = FrameKind::Else;
+                    // The else branch starts with the same operand stack
+                    // the then branch started with (block params) — the
+                    // then branch ended in unreachable code, so restore.
+                    ctx.stack.truncate(frame.stack_height);
+                    for v in frame.stack_snapshot.clone() {
+                        ctx.push(v);
+                    }
                 }
                 ctx.push_buf();
                 return Ok(()); // fall through to normal code from here
@@ -1706,14 +1759,40 @@ fn process_op(ctx: &mut EmitCtx<'_>, op: Operator<'_>) -> anyhow::Result<()> {
                     }
                 });
             } else {
-                let tmp = ctx.fresh_tmp();
-                ctx.emit(quote! {
-                    let #root::_rexport::tuple_list::tuple_list!(#tmp) = match #call {
-                        Ok(a) => a,
-                        Err(e) => return #fp_ts::ret(Err(e)),
-                    };
-                });
-                ctx.push(quote! { #tmp });
+                let n_results = sig.returns.len();
+                if n_results == 1 {
+                    let tmp = ctx.fresh_tmp();
+                    ctx.emit(quote! {
+                        let #root::_rexport::tuple_list::tuple_list!(#tmp) = match #call {
+                            Ok(a) => a,
+                            Err(e) => return #fp_ts::ret(Err(e)),
+                        };
+                    });
+                    ctx.push(quote! { #tmp });
+                } else {
+                    // Multi-result callee: bind the whole tuple-list, then
+                    // destructure it into individual temps.
+                    let tup = ctx.fresh_tmp();
+                    let tmps: Vec<_> = (0..n_results).map(|_| ctx.fresh_tmp()).collect();
+                    ctx.emit(quote! {
+                        let #tup = match #call {
+                            Ok(a) => a,
+                            Err(e) => return #fp_ts::ret(Err(e)),
+                        };
+                    });
+                    // tuple_list is a nested cons: (v0, (v1, (v2, ())))
+                    // Destructure via recursive let patterns.
+                    let mut pattern = quote! { () };
+                    for t in tmps.iter().rev() {
+                        pattern = quote! { (#t, #pattern) };
+                    }
+                    ctx.emit(quote! {
+                        let #pattern = #tup;
+                    });
+                    for t in tmps {
+                        ctx.push(quote! { #t });
+                    }
+                }
             }
         }
 
@@ -1772,10 +1851,18 @@ fn process_op(ctx: &mut EmitCtx<'_>, op: Operator<'_>) -> anyhow::Result<()> {
                 // labeled scopes (mirrors push_tmp scope widening).
                 if ctx.out_stack.len() > 1 {
                     if let Some(root_buf) = ctx.out_stack.first_mut() {
-                        root_buf.push(quote! { let mut #t: #ty = Default::default(); });
+                        root_buf.push(if is_ref_ty_for_decl(&ty) {
+                                quote! { let mut #t: #ty = #fp_ts::Value(::wars_rt::func::value::Value::Null); }
+                            } else {
+                                quote! { let mut #t: #ty = Default::default(); }
+                            });
                     }
                 } else {
-                    ctx.emit(quote! { let mut #t: #ty = Default::default(); });
+                    ctx.emit(if is_ref_ty_for_decl(&ty) {
+                        quote! { let mut #t: #ty = #fp_ts::Value(::wars_rt::func::value::Value::Null); }
+                    } else {
+                        quote! { let mut #t: #ty = Default::default(); }
+                    });
                 }
                 Some(t)
             };
@@ -1783,12 +1870,24 @@ fn process_op(ctx: &mut EmitCtx<'_>, op: Operator<'_>) -> anyhow::Result<()> {
                 result_tys.iter().enumerate().map(|(i, ty)| {
                     let t = format_ident!("_b{label}_{i}");
                     let ty = shared::render_ty(ctx.core, &quote! { C }, *ty);
+                    let dbg_target = if ctx.out_stack.len() > 1 { "root" } else { "cur" };
+                    if std::env::var("WARS_DBG_BR").is_ok() {
+                        eprintln!("decl _b{label} (multi? false) -> {}", dbg_target);
+                    }
                     if ctx.out_stack.len() > 1 {
                         if let Some(root_buf) = ctx.out_stack.first_mut() {
-                            root_buf.push(quote! { let mut #t: #ty = Default::default(); });
+                            root_buf.push(if is_ref_ty_for_decl(&ty) {
+                                quote! { let mut #t: #ty = #fp_ts::Value(::wars_rt::func::value::Value::Null); }
+                            } else {
+                                quote! { let mut #t: #ty = Default::default(); }
+                            });
                         }
                     } else {
-                        ctx.emit(quote! { let mut #t: #ty = Default::default(); });
+                        ctx.emit(if is_ref_ty_for_decl(&ty) {
+                        quote! { let mut #t: #ty = #fp_ts::Value(::wars_rt::func::value::Value::Null); }
+                    } else {
+                        quote! { let mut #t: #ty = Default::default(); }
+                    });
                     }
                     t
                 }).collect()
@@ -1804,6 +1903,7 @@ fn process_op(ctx: &mut EmitCtx<'_>, op: Operator<'_>) -> anyhow::Result<()> {
                 result_tmp,
                 result_tmps,
                 stack_height: sh,
+                stack_snapshot: vec![],
                 condition: None,
                 if_stmts: None,
             });
@@ -1818,10 +1918,18 @@ fn process_op(ctx: &mut EmitCtx<'_>, op: Operator<'_>) -> anyhow::Result<()> {
                 let ty = shared::render_ty(ctx.core, &quote! { C }, result_tys[0]);
                 if ctx.out_stack.len() > 1 {
                     if let Some(root_buf) = ctx.out_stack.first_mut() {
-                        root_buf.push(quote! { let mut #t: #ty = Default::default(); });
+                        root_buf.push(if is_ref_ty_for_decl(&ty) {
+                                quote! { let mut #t: #ty = #fp_ts::Value(::wars_rt::func::value::Value::Null); }
+                            } else {
+                                quote! { let mut #t: #ty = Default::default(); }
+                            });
                     }
                 } else {
-                    ctx.emit(quote! { let mut #t: #ty = Default::default(); });
+                    ctx.emit(if is_ref_ty_for_decl(&ty) {
+                        quote! { let mut #t: #ty = #fp_ts::Value(::wars_rt::func::value::Value::Null); }
+                    } else {
+                        quote! { let mut #t: #ty = Default::default(); }
+                    });
                 }
                 Some(t)
             };
@@ -1834,6 +1942,7 @@ fn process_op(ctx: &mut EmitCtx<'_>, op: Operator<'_>) -> anyhow::Result<()> {
                 result_tmp,
                 result_tmps: vec![],
                 stack_height: sh,
+                stack_snapshot: vec![],
                 condition: None,
                 if_stmts: None,
             });
@@ -1849,22 +1958,56 @@ fn process_op(ctx: &mut EmitCtx<'_>, op: Operator<'_>) -> anyhow::Result<()> {
                 let ty = shared::render_ty(ctx.core, &quote! { C }, result_tys[0]);
                 if ctx.out_stack.len() > 1 {
                     if let Some(root_buf) = ctx.out_stack.first_mut() {
-                        root_buf.push(quote! { let mut #t: #ty = Default::default(); });
+                        root_buf.push(if is_ref_ty_for_decl(&ty) {
+                                quote! { let mut #t: #ty = #fp_ts::Value(::wars_rt::func::value::Value::Null); }
+                            } else {
+                                quote! { let mut #t: #ty = Default::default(); }
+                            });
                     }
                 } else {
-                    ctx.emit(quote! { let mut #t: #ty = Default::default(); });
+                    ctx.emit(if is_ref_ty_for_decl(&ty) {
+                        quote! { let mut #t: #ty = #fp_ts::Value(::wars_rt::func::value::Value::Null); }
+                    } else {
+                        quote! { let mut #t: #ty = Default::default(); }
+                    });
                 }
                 Some(t)
             };
+            let result_tmps: Vec<Ident> = if result_tys.len() > 1 {
+                result_tys.iter().enumerate().map(|(i, ty)| {
+                    let t = format_ident!("_b{label}_{i}");
+                    let ty = shared::render_ty(ctx.core, &quote! { C }, *ty);
+                    if ctx.out_stack.len() > 1 {
+                        if let Some(root_buf) = ctx.out_stack.first_mut() {
+                            root_buf.push(if is_ref_ty_for_decl(&ty) {
+                                quote! { let mut #t: #ty = #fp_ts::Value(::wars_rt::func::value::Value::Null); }
+                            } else {
+                                quote! { let mut #t: #ty = Default::default(); }
+                            });
+                        }
+                    } else {
+                        ctx.emit(if is_ref_ty_for_decl(&ty) {
+                        quote! { let mut #t: #ty = #fp_ts::Value(::wars_rt::func::value::Value::Null); }
+                    } else {
+                        quote! { let mut #t: #ty = Default::default(); }
+                    });
+                    }
+                    t
+                }).collect()
+            } else {
+                vec![]
+            };
             let sh = ctx.stack.len();
+            let stack_snapshot = ctx.stack.clone();
             ctx.push_buf();
             ctx.frames.push(Frame {
                 kind: FrameKind::If,
                 label,
-                result_tys,
+                result_tys: result_tys.clone(),
                 result_tmp,
-                result_tmps: vec![],
+                result_tmps,
                 stack_height: sh,
+                stack_snapshot,
                 condition: Some(cond),
                 if_stmts: None,
             });
@@ -1875,8 +2018,21 @@ fn process_op(ctx: &mut EmitCtx<'_>, op: Operator<'_>) -> anyhow::Result<()> {
             let frame = ctx.frames.last_mut().expect("else without frame");
             frame.if_stmts = Some(if_body);
             frame.kind = FrameKind::Else;
-            // The else branch starts with the stack as it was at `if`.
+            // The else branch starts with the stack as it was at `if` —
+            // restore the block-param values the then branch consumed.
+            if std::env::var("WARS_DBG_ELSE").is_ok() {
+                eprintln!(
+                    "Else: func={} sh={} stack={:?} snap={:?}",
+                    ctx.func_idx,
+                    frame.stack_height,
+                    ctx.stack.iter().map(|t| t.to_string()).collect::<Vec<_>>(),
+                    frame.stack_snapshot.iter().map(|t| t.to_string()).collect::<Vec<_>>()
+                );
+            }
             ctx.stack.truncate(frame.stack_height);
+            for v in frame.stack_snapshot.clone() {
+                ctx.push(v);
+            }
             ctx.push_buf();
         }
         Operator::End => {
@@ -1982,24 +2138,45 @@ fn process_op(ctx: &mut EmitCtx<'_>, op: Operator<'_>) -> anyhow::Result<()> {
                         }
                     }
                     FrameKind::If => {
-                        // if without else
+                        // if without else. Labeled so that `br` to this
+                        // frame can `break 'lN` out of it.
                         let cond = frame.condition.clone().unwrap_or(quote! { 0u32 });
+                        let n = frame.result_tys.len();
+                        let captured: Vec<TokenStream> = if n > 0 {
+                            let start = ctx.stack.len().saturating_sub(n);
+                            ctx.stack[start..].to_vec()
+                        } else {
+                            vec![]
+                        };
                         let result_assign = frame.result_tmp.as_ref().and_then(|rt| {
-                            ctx.stack.last().map(|val| {
+                            captured.last().map(|val| {
                                 let val = val.clone();
                                 quote! { #rt = #fp_ts::cast::<_,_,C>(#val); }
                             })
                         }).unwrap_or_default();
+                        let inner_assigns = frame.result_tmps.iter().zip(captured.iter()).map(|(t, v)| {
+                            quote! { #t = #fp_ts::cast::<_,_,C>(#v); }
+                        });
                         let sh = frame.stack_height;
+                        let lt = Lifetime::new(&format!("'l{}", frame.label), Span::call_site());
                         ctx.emit(quote! {
-                            if #cond != 0u32 {
-                                #stmts
-                                #result_assign
+                            #lt: {
+                                if #cond != 0u32 {
+                                    #stmts
+                                    #result_assign
+                                    #(#inner_assigns)*
+                                }
                             }
                         });
                         ctx.stack.truncate(sh);
-                        if let Some(rt) = frame.result_tmp {
-                            ctx.push(quote! { #rt });
+                        if n == 1 {
+                            if let Some(rt) = frame.result_tmp {
+                                ctx.push(quote! { #rt });
+                            }
+                        } else if n > 1 {
+                            for t in frame.result_tmps.clone() {
+                                ctx.push(quote! { #t });
+                            }
                         }
                     }
                     FrameKind::Else => {
@@ -2013,17 +2190,35 @@ fn process_op(ctx: &mut EmitCtx<'_>, op: Operator<'_>) -> anyhow::Result<()> {
                                 quote! { #rt = #fp_ts::cast::<_,_,C>(#val); }
                             })
                         }).unwrap_or_default();
+                        let n = frame.result_tys.len();
+                        let captured: Vec<TokenStream> = if n > 0 {
+                            let start = ctx.stack.len().saturating_sub(n);
+                            ctx.stack[start..].to_vec()
+                        } else {
+                            vec![]
+                        };
+                        let inner_assigns = frame.result_tmps.iter().zip(captured.iter()).map(|(t, v)| {
+                            quote! { #t = #fp_ts::cast::<_,_,C>(#v); }
+                        });
                         let sh = frame.stack_height;
+                        let lt = Lifetime::new(&format!("'l{}", frame.label), Span::call_site());
                         ctx.emit(quote! {
-                            if #cond != 0u32 {
-                                #if_stmts_ts
-                            } else {
-                                #stmts
-                                #result_assign
+                            #lt: {
+                                if #cond != 0u32 {
+                                    #if_stmts_ts
+                                } else {
+                                    #stmts
+                                    #result_assign
+                                    #(#inner_assigns)*
+                                }
                             }
                         });
                         ctx.stack.truncate(sh);
-                        if let Some(rt) = frame.result_tmp {
+                        if frame.result_tys.len() > 1 {
+                            for t in frame.result_tmps.iter() {
+                                ctx.push(quote! { #t });
+                            }
+                        } else if let Some(rt) = &frame.result_tmp {
                             ctx.push(quote! { #rt });
                         }
                     }
@@ -2080,6 +2275,23 @@ fn process_op(ctx: &mut EmitCtx<'_>, op: Operator<'_>) -> anyhow::Result<()> {
             ctx.unreachable_depth = 1;
         }
 
+        Operator::RefNull { .. } => {
+            ctx.push_tmp(quote! { #fp_ts::Value(::wars_rt::func::value::Value::Null) });
+        }
+        Operator::RefFunc { function_index } => {
+            let fr = render_fun_ref(ctx.core, ctx.m, function_index, None);
+            // render_fun_ref yields a Df whose generic params must be pinned
+            // for the Coe cast to resolve.
+            let sig = ctx.m.func_sig(function_index);
+            let params = sig.as_ref().params.iter().map(|t| shared::render_ty(ctx.core, &quote! { c }, *t));
+            let returns = sig.as_ref().returns.iter().map(|t| shared::render_ty(ctx.core, &quote! { c }, *t));
+            let root = ctx.root().clone();
+            let params_ts = quote! { #root::_rexport::tuple_list::tuple_list_type!(#(#params),*) };
+            let returns_ts = quote! { #root::_rexport::tuple_list::tuple_list_type!(#(#returns),*) };
+            ctx.push_tmp(quote! {
+                <#root::func::Df<#params_ts, #returns_ts, C> as #root::func::Coe<C>>::coe(#fr)
+            });
+        }
         _ => {
             // Log unimplemented op if needed.
         }

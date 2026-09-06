@@ -59,6 +59,10 @@ enum Planned {
         /// Definition (not auto-instantiated in the reference script sense;
         /// we instantiate every `Module` and `ModuleDefinition` here).
         bytes: Vec<u8>,
+        /// Result of full wasmparser validation. Invalid modules (mostly
+        /// assert_invalid targets) are excluded from codegen and all their
+        /// directives are skipped.
+        valid: bool,
     },
     AssertReturn {
         line: usize,
@@ -156,13 +160,15 @@ pub fn run_file(runner: &Runner, path: &Path, limit: Option<usize>) -> Result<Fi
                 let bytes = qw
                     .encode()
                     .map_err(|e| anyhow::anyhow!("encoding module: {e}"))?;
-                planned.push(Planned::Module { bytes });
+                let valid = validate_wasm(&bytes);
+                planned.push(Planned::Module { bytes, valid });
             }
             WastDirective::ModuleDefinition(mut qw) => {
                 let bytes = qw
                     .encode()
                     .map_err(|e| anyhow::anyhow!("encoding module definition: {e}"))?;
-                planned.push(Planned::Module { bytes });
+                let valid = validate_wasm(&bytes);
+                planned.push(Planned::Module { bytes, valid });
             }
             WastDirective::ModuleInstance { .. } => {
                 planned.push(Planned::Other);
@@ -223,22 +229,30 @@ pub fn run_file(runner: &Runner, path: &Path, limit: Option<usize>) -> Result<Fi
         planned.truncate(n);
     }
 
-    // Collect module binaries in order.
-    let modules: Vec<Vec<u8>> = planned
-        .iter()
-        .filter_map(|p| match p {
-            Planned::Module { bytes } => Some(bytes.clone()),
-            _ => None,
-        })
-        .collect();
+    // Collect module binaries in order, filtering out invalid modules.
+    let mut modules: Vec<Vec<u8>> = vec![];
+    let mut module_ord_to_idx: std::collections::HashMap<usize, usize> = Default::default();
+    let mut module_ords: Vec<usize> = vec![]; // per planned index: ord if module
+    for (idx, p) in planned.iter().enumerate() {
+        if let Planned::Module { bytes, valid } = p {
+            let ord = module_ords.len();
+            module_ords.push(ord);
+            if *valid {
+                module_ord_to_idx.insert(ord, modules.len());
+                modules.push(bytes.clone());
+            }
+        }
+    }
+    let all_invalid = modules.is_empty();
+    let modules = modules;
 
-    if modules.is_empty() {
+    if all_invalid {
         for (idx, p) in planned.iter().enumerate() {
             result.push(CaseResult {
                 index: idx,
                 line: planned_line(p),
                 assertion: planned_assertion(p),
-                outcome: Outcome::Skip { msg: "no modules executed".into() },
+                outcome: Outcome::Skip { msg: "no valid modules executed".into() },
             });
         }
         return Ok(result);
@@ -323,21 +337,49 @@ pub fn run_file(runner: &Runner, path: &Path, limit: Option<usize>) -> Result<Fi
             writeln!(stdin, "{req}")?;
         }
         let mut module_cursor = 0usize;
+        // Ord of the most recent module directive; used to gate directives
+        // that follow an invalid module (they cannot execute).
+        let mut last_module_ord: Option<usize> = None;
         for (idx, p) in planned.iter().enumerate() {
             let req = match p {
-                Planned::Module { .. } => {
-                    let r = serde_json::json!({"op":"use_module","idx":idx,"module":module_cursor});
-                    module_cursor += 1;
+                Planned::Module { valid, .. } => {
+                    let r = if *valid {
+                        let m = module_ord_to_idx[&module_cursor];
+                        module_cursor += 1;
+                        last_module_ord = Some(module_cursor - 1);
+                        serde_json::json!({"op":"use_module","idx":idx,"module":m})
+                    } else {
+                        last_module_ord = None;
+                        serde_json::json!({"op":"other","idx":idx})
+                    };
                     r
+                }
+                Planned::AssertReturn { exec, results, .. }
+                if last_module_ord.is_none() =>
+                {
+                    serde_json::json!({"op":"harness_skip_invalid_module","idx":idx})
                 }
                 Planned::AssertReturn { exec, results, .. } => {
                     serde_json::json!({"op":"assert_return","idx":idx,"exec":exec_json(exec),"results":rets_json(results)})
                 }
+                Planned::AssertTrap { exec, message, .. }
+                if last_module_ord.is_none() =>
+                {
+                    serde_json::json!({"op":"harness_skip_invalid_module","idx":idx})
+                }
                 Planned::AssertTrap { exec, message, .. } => {
                     serde_json::json!({"op":"assert_trap","idx":idx,"exec":exec_json(exec),"message":message})
                 }
+                Planned::AssertExhaustion { exec, .. }
+                if last_module_ord.is_none() =>
+                {
+                    serde_json::json!({"op":"harness_skip_invalid_module","idx":idx})
+                }
                 Planned::AssertExhaustion { exec, .. } => {
                     serde_json::json!({"op":"assert_exhaustion","idx":idx,"exec":exec_json(exec)})
+                }
+                Planned::Action { exec, .. } if last_module_ord.is_none() => {
+                    serde_json::json!({"op":"harness_skip_invalid_module","idx":idx})
                 }
                 Planned::Action { exec, .. } => {
                     serde_json::json!({"op":"action","idx":idx,"exec":exec_json(exec)})
@@ -416,6 +458,14 @@ pub fn run_file(runner: &Runner, path: &Path, limit: Option<usize>) -> Result<Fi
     }
     result.cases.sort_by_key(|c| c.index);
     Ok(result)
+}
+
+/// Full wasm validation via wasmparser. Returns true when the module is
+/// valid (or validation is unavailable).
+fn validate_wasm(bytes: &[u8]) -> bool {
+    wasmparser::Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(bytes)
+        .is_ok()
 }
 
 fn plan_invoke(inv: &WastInvoke) -> ExecPlan {

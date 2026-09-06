@@ -1,6 +1,8 @@
-//! Auto-generated from worker_main.rs — the worker main loop as a string constant.
-pub const WORKER_MAIN: &str = r##"
-// ── worker main loop (generated) ─────────────────────────────────────────────
+//! AUTO-GENERATED from crates/spectests/src/worker_main.rs — do not edit
+//! directly. Regenerate with the python heredoc (replace " with \" inside
+//! string literals, then wrap in r##"..."##).
+
+pub const WORKER_MAIN: &str = r##"// ── worker main loop (generated) ─────────────────────────────────────────────
 // The worker reads one JSON command per line on stdin and answers with one
 // JSON line per command on stdout. It maintains a list of instantiated
 // modules; commands reference the most recently used module.
@@ -164,6 +166,10 @@ pub fn worker_main() {
                 answer(&mut stdout, &v["idx"], "skip",
                     "assert_invalid requires pre-codegen validation");
             }
+            "harness_skip_invalid_module" => {
+                answer(&mut stdout, &v["idx"], "skip",
+                    "directive follows an invalid module (assert_invalid); not executed");
+            }
             "register" => {
                 answer(&mut stdout, &v["idx"], "skip", "register pending");
             }
@@ -326,5 +332,4 @@ fn invoke_export0(
 ) -> Result<String, (String, String)> {
     dispatch_m0!(host, field, args, results)
 }
-
 "##;

@@ -162,6 +162,10 @@ pub fn worker_main() {
                 answer(&mut stdout, &v["idx"], "skip",
                     "assert_invalid requires pre-codegen validation");
             }
+            "harness_skip_invalid_module" => {
+                answer(&mut stdout, &v["idx"], "skip",
+                    "directive follows an invalid module (assert_invalid); not executed");
+            }
             "register" => {
                 answer(&mut stdout, &v["idx"], "skip", "register pending");
             }
