@@ -1462,6 +1462,18 @@ fn process_op(ctx: &mut EmitCtx<'_>, op: Operator<'_>) -> anyhow::Result<()> {
             if ctx.unreachable_depth > 0 {
                 ctx.unreachable_depth -= 1;
                 if ctx.unreachable_depth > 0 {
+                    // This End closes a structurally-nested construct that
+                    // was itself entered while already unreachable (the
+                    // `Block | Loop | If` arm above), not the block the
+                    // original `br`/`return` jumped out of. Pop the
+                    // placeholder frame and buffer pushed for it there, to
+                    // balance that push, and discard the buffer — dead code
+                    // has nothing live to emit. Leaving them on the stacks
+                    // would make the *next* End (possibly the one that
+                    // brings depth to 0) pop this stale placeholder instead
+                    // of the real enclosing frame.
+                    ctx.frames.pop();
+                    ctx.pop_buf();
                     return Ok(());
                 }
                 // Depth reaches 0: this End closes the block the `br`/

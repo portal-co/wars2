@@ -182,12 +182,46 @@ pub fn worker_main() {
 }
 
 
+/// JSON-to-typed-argument conversion for [`arg_val`]. Integer args carry
+/// their exact value under `"v"` (`arg_json`'s `ArgPlan::I32`/`I64`
+/// encoding) — i32/i64 test literals are signed two's-complement, so a
+/// `u32`/`u64` destination must reinterpret the bit pattern with `as`, not
+/// reject a negative decimal string by parsing it as unsigned. Float args
+/// instead carry their raw IEEE-754 bit pattern under `"bits"`
+/// (`ArgPlan::F32Bits`/`F64Bits`): an `f32`/`f64` destination needs exact
+/// bit-for-bit reproduction (NaN payloads, signaling bits, -0.0, ...), which
+/// a decimal round-trip through `FromStr` cannot guarantee.
+trait FromArgJson: Sized {
+    fn from_arg_json(a: &serde_json::Value) -> Option<Self>;
+}
+
+impl FromArgJson for u32 {
+    fn from_arg_json(a: &serde_json::Value) -> Option<Self> {
+        Some(a.get("v")?.as_i64()? as u32)
+    }
+}
+
+impl FromArgJson for u64 {
+    fn from_arg_json(a: &serde_json::Value) -> Option<Self> {
+        Some(a.get("v")?.as_i64()? as u64)
+    }
+}
+
+impl FromArgJson for f32 {
+    fn from_arg_json(a: &serde_json::Value) -> Option<Self> {
+        Some(f32::from_bits(a.get("bits")?.as_u64()? as u32))
+    }
+}
+
+impl FromArgJson for f64 {
+    fn from_arg_json(a: &serde_json::Value) -> Option<Self> {
+        Some(f64::from_bits(a.get("bits")?.as_u64()?))
+    }
+}
+
 /// Convert one JSON arg to a typed value.
-fn arg_val<T: std::str::FromStr>(a: &serde_json::Value) -> Result<T, (String, String)> {
-    // Numbers arrive as i64/u64/f64 bits; T is u32/u64/f32/f64 via FromStr on
-    // a rendered decimal — but bits must pass exactly, so parse via u64.
-    let v = a.get("v").and_then(|x| x.as_i64()).unwrap_or(0);
-    v.to_string().parse::<T>().map_err(|_| {
+fn arg_val<T: FromArgJson>(a: &serde_json::Value) -> Result<T, (String, String)> {
+    T::from_arg_json(a).ok_or_else(|| {
         (
             "fail".to_string(),
             format!("cannot convert arg {}", a),
