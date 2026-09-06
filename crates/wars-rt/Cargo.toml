@@ -25,3 +25,4 @@ libm = "0.2.16"
 ic-stable-structures = ["dep:ic-stable-structures"]
 std = ["anyhow/std","spin/std"]
 dumpster = ["dep:dumpster","std"]
+spectest = ["std"]
