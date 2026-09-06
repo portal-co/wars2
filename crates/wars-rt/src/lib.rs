@@ -7,6 +7,8 @@ pub mod func;
 #[cfg(feature = "dumpster")]
 pub mod gc;
 pub mod wasix;
+#[cfg(feature = "spectest")]
+pub mod spectest;
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use core::{error::Error, iter::empty};
 #[cfg(not(feature = "std"))]

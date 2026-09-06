@@ -25,7 +25,12 @@ pub(crate) fn bindname(a: &str) -> String {
             v.extend(format!("_{}_", k as u32).chars());
         }
     }
-    v.into_iter().collect()
+    let mut out: String = v.into_iter().collect();
+    // Rust idents cannot start with a digit.
+    if out.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+        out.insert(0, '_');
+    }
+    out
 }
 
 // ── Core token helpers ────────────────────────────────────────────────────────

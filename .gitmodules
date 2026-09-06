@@ -1,0 +1,3 @@
+[submodule "crates/spectests/spec"]
+	path = crates/spectests/spec
+	url = https://github.com/WebAssembly/spec

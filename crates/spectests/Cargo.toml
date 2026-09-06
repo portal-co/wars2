@@ -1,0 +1,22 @@
+[package]
+name = "spectests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "WebAssembly spec-test conformance harness for wars2"
+
+[dependencies]
+wars = { path = "../wars", features = ["waffle", "wasmparser"] }
+wars-rt = { path = "../wars-rt", features = ["std"] }
+anyhow = "1.0"
+clap = { version = "4", features = ["derive"] }
+wast = "258.0.0"
+wat = "1.227.0"
+wasmparser = { workspace = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+proc-macro2 = "1.0.107"
+quote = "1.0.47"
+syn = { version = "2", features = ["full","extra-traits","parsing"] }
+prettyplease = { version = "0.2.37", default-features = false, features = ["verbatim"] }
